@@ -174,7 +174,7 @@ mod tests {
             next_deadline_ms: None,
             mode: crate::input::mouse::ScrollInputMode::Auto,
             events_per_tick: 3,
-            wheel_lines_per_tick: 3,
+            wheel_lines_per_tick: 6,
             trackpad_lines_per_tick: 1,
             invert: false,
             speed_multiplier: 1.0,

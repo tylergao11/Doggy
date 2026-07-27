@@ -464,7 +464,7 @@ pub fn is_fetch_enabled() -> bool {
         .unwrap_or(true)
 }
 
-/// Fetch managed config + requirements and write to `~/.grok/`, trying the
+/// Fetch managed config + requirements and write to `~/.Doggy/`, trying the
 /// deployment key first, then a signed-in team. `Ok(false)` when neither applies.
 pub async fn sync() -> Result<bool, ManagedConfigError> {
     Ok(sync_with_budget(SyncBudget::Standard, None).await?.wrote)
@@ -1010,7 +1010,7 @@ fn managed_policy_gate_decision(
 /// and exit codes stay out of the library.
 #[derive(Debug)]
 pub enum SetupOutcome {
-    /// Config was written to `~/.grok`.
+    /// Config was written to `~/.Doggy`.
     Installed,
     /// The principal is valid but the server has no config for it.
     NothingConfigured,

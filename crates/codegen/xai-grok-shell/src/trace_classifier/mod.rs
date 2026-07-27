@@ -2447,7 +2447,7 @@ mod tests {
     /// * `GROK_AUTH` — inline-JSON credentials override that bypasses
     ///   the on-disk read entirely (`AuthManager::new`).
     /// * `GROK_AUTH_PATH` — overrides the auth.json path; if set to
-    ///   the operator's real `~/.grok/auth.json`, the test would read
+    ///   the operator's real `~/.Doggy/auth.json`, the test would read
     ///   live OIDC credentials instead of the scratch fixture.
     /// * `GROK_AUTH_PROVIDER_COMMAND` — selects an external
     ///   refresher that could mint credentials independent of the

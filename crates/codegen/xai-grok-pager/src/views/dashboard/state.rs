@@ -355,7 +355,7 @@ pub enum FilterValue {
 }
 
 /// Persisted dashboard configuration stored under `[dashboard]` in
-/// `~/.grok/config.toml`. Lenient — corrupted fields fall back to
+/// `~/.Doggy/config.toml`. Lenient — corrupted fields fall back to
 /// defaults (edge case 12).
 ///
 /// Pinned + reorder are keyed by stable session ids (see
@@ -713,24 +713,32 @@ pub struct DashboardState {
     pub multiline_mode: bool,
 }
 
-/// Mode staged for the next agent the dashboard spawns. Mirrors the agent
-/// view's Shift+Tab cycle (Normal → Plan → Always-Approve → Normal).
+/// Mode staged for the next agent the dashboard spawns.
+/// Doggy product surface: Plan ↔ Auto only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DashboardDispatchMode {
+    /// Full auto-run tools (product "Auto"). Default for new agents.
     #[default]
-    Normal,
+    Auto,
     Plan,
+    /// Deprecated alias of [`Self::Auto`].
     AlwaysApprove,
+    /// Deprecated alias of [`Self::Auto`] (old "Normal"/ask).
+    Normal,
 }
 
 impl DashboardDispatchMode {
-    /// Advance to the next mode in the Shift+Tab rotation.
+    /// Advance Plan ↔ Auto.
     pub fn cycle(self) -> Self {
         match self {
-            Self::Normal => Self::Plan,
-            Self::Plan => Self::AlwaysApprove,
-            Self::AlwaysApprove => Self::Normal,
+            Self::Plan => Self::Auto,
+            Self::Auto | Self::AlwaysApprove | Self::Normal => Self::Plan,
         }
+    }
+
+    /// Whether this mode auto-approves tools.
+    pub fn is_auto(self) -> bool {
+        !matches!(self, Self::Plan)
     }
 }
 
@@ -4569,7 +4577,7 @@ pub fn load_persisted_enabled() -> Option<bool> {
         .and_then(|v| v.as_bool())
 }
 
-/// Load the full persisted dashboard from `~/.grok/config.toml`.
+/// Load the full persisted dashboard from `~/.Doggy/config.toml`.
 ///
 /// Returns `None` only when the file is missing or completely unreadable.
 /// Malformed individual fields fall back to defaults silently (edge case
@@ -4624,7 +4632,7 @@ pub fn load_persisted_from_path(path: &std::path::Path) -> Option<PersistedDashb
 /// non-empty AND unparseable, meaning we MUST NOT overwrite it (the
 /// file may contain user data we cannot interpret). Without this
 /// guard, a single dashboard pin would clobber every other table in
-/// `~/.grok/config.toml` (`[ui]`, `[hints]`, `[mcpServers]`, …).
+/// `~/.Doggy/config.toml` (`[ui]`, `[hints]`, `[mcpServers]`, …).
 ///
 /// Atomic write via `<path>.dashboard.tmp.<pid>`
 /// + rename, so concurrent readers never observe a half-truncated file.

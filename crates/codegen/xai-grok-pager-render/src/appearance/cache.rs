@@ -39,7 +39,7 @@ const GROUP_TOOL_VERBS_DEFAULT: bool = true;
 const COLLAPSED_EDIT_BLOCKS_DEFAULT: bool = false;
 /// Next-prompt suggestions (tab autocomplete ghost text) default ON.
 const PROMPT_SUGGESTIONS_DEFAULT: bool = true;
-const KEEP_TEXT_SELECTION_DEFAULT: TextSelection = TextSelection::Flash;
+const KEEP_TEXT_SELECTION_DEFAULT: TextSelection = TextSelection::WordSelect;
 /// Scroll speed default (1-100 scale, matches the legacy `[ui].scroll_speed`).
 const SCROLL_SPEED_DEFAULT: u8 = 50;
 const SCROLL_SPEED_MIN: u8 = 1;

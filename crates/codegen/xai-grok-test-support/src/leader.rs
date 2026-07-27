@@ -135,12 +135,12 @@ impl LeaderStdioClient {
             .env_clear()
             .env("PATH", std::env::var("PATH").unwrap_or_default())
             .env("HOME", home)
-            .env("GROK_HOME", home.join(".grok"))
+            .env("GROK_HOME", home.join(".Doggy"))
             // Pin the socket inside the sandbox. The lock file is the
             // sibling `.lock` (leader.sock -> leader.lock), and the spawned
             // leader subprocess inherits/forwards this env var, so every
             // (re-)elected leader binds the same sandboxed path.
-            .env("GROK_LEADER_SOCKET", home.join(".grok").join("leader.sock"))
+            .env("GROK_LEADER_SOCKET", home.join(".Doggy").join("leader.sock"))
             .env("GROK_CLI_CHAT_PROXY_BASE_URL", server.url())
             .env("GROK_XAI_API_BASE_URL", server.url())
             .env("XAI_API_KEY", "test-key-for-ci")
@@ -149,7 +149,7 @@ impl LeaderStdioClient {
             .env("GROK_TRACE_UPLOAD", "false")
             .env("GROK_INSTRUMENTATION", "disabled")
             // Inherited by the spawned leader, whose stderr goes to
-            // ~/.grok/leader.log — keep it chatty for diagnosis.
+            // ~/.Doggy/leader.log — keep it chatty for diagnosis.
             .env("RUST_LOG", "xai_grok_shell=debug");
 
         let (mut child, stderr) = spawn_piped_with_stderr_capture(cmd);
@@ -284,7 +284,7 @@ impl LeaderStdioClient {
 }
 
 pub fn leader_lock_path(home: &Path) -> PathBuf {
-    home.join(".grok").join("leader.lock")
+    home.join(".Doggy").join("leader.lock")
 }
 
 pub fn read_leader_pid(home: &Path) -> Option<u32> {
@@ -350,5 +350,5 @@ pub async fn wait_for_replay_notifications(
 }
 
 pub fn leader_log(home: &Path) -> String {
-    std::fs::read_to_string(home.join(".grok").join("leader.log")).unwrap_or_default()
+    std::fs::read_to_string(home.join(".Doggy").join("leader.log")).unwrap_or_default()
 }

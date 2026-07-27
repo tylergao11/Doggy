@@ -3,7 +3,7 @@
 //! This is the client/workspace half of the folder-trust gate: it scans a
 //! workspace for repo-local code-exec configs, resolves the pure trust
 //! [`decide`] precedence, prompts (MVP stderr), and reads/writes the durable
-//! [`crate::trust::TrustStore`] (`~/.grok/trusted_folders.toml`). The
+//! [`crate::trust::TrustStore`] (`~/.Doggy/trusted_folders.toml`). The
 //! consume/gating half (the `DECISIONS` cache, `resolve_and_record`,
 //! `project_scope_allowed`, the loader filters) lives in `xai-grok-shell`.
 //!
@@ -110,7 +110,7 @@ pub fn decide_inputs_with_interactive(
         is_interactive,
         // An over-broad key (home / fs-root / non-absolute) can never be recorded
         // by the store, so decide() trusts it rather than prompt on a key that
-        // can't persist (Case 2: cwd IS $HOME, incl. the default `~/.grok`).
+        // can't persist (Case 2: cwd IS $HOME, incl. the default `~/.Doggy`).
         key_recordable: !crate::trust::is_unsafe_trust_root(key),
     }
 }
@@ -183,7 +183,7 @@ fn feature_enabled_for_build(remote: Option<&RemoteSettings>, is_local_build: bo
 /// Persist an explicit `--trust` grant for `cwd`'s workspace so repo-local
 /// servers are honored on the next resolve. Done client-side because trust is
 /// durable: even when the agent runs in a separate leader process it reads the
-/// same `~/.grok/trusted_folders.toml`. Best-effort; a write failure is logged,
+/// same `~/.Doggy/trusted_folders.toml`. Best-effort; a write failure is logged,
 /// not fatal.
 pub fn grant_folder_trust(cwd: &Path) {
     // Local/dev builds never gate, so there is nothing to grant: `--trust` is a
@@ -249,7 +249,7 @@ pub fn repo_configs_present(cwd: &Path) -> bool {
 /// cheap→expensive marker order. Single source with [`repo_configs_present`]
 /// (which is `!repo_config_kinds(cwd).is_empty()`), so a folder that the gate
 /// fired on always has a non-empty, accurate kind list — no `[plugins].paths` /
-/// `.claude` / `.grok/agents` / subdir-launch gaps. NOT itself the trust gate.
+/// `.claude` / `.Doggy/agents` / subdir-launch gaps. NOT itself the trust gate.
 pub fn repo_config_kinds(cwd: &Path) -> Vec<&'static str> {
     collect_repo_config_kinds(cwd, false)
 }
@@ -293,7 +293,7 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
     if !crate::project_config::find_mcp_json_files_in(&chain.dirs).is_empty() {
         hit!("mcp");
     }
-    // Project `.grok/config.toml` declaring repo-controlled code-exec: a
+    // Project `.Doggy/config.toml` declaring repo-controlled code-exec: a
     // non-empty `[mcp_servers]` table OR a non-empty `[plugins].paths` array.
     // `[plugins].paths` loads as auto-trusted ConfigPath plugins, so a clone
     // whose ONLY repo-local config is `[plugins].paths` must still be gated
@@ -319,7 +319,7 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
         }
     }
     // Project `.grok/lsp.json`.
-    if cwd.join(".grok").join("lsp.json").is_file() {
+    if cwd.join(".Doggy").join("lsp.json").is_file() {
         hit!("lsp");
     }
     // Project `.cursor/mcp.json` — vendor MCP loading is default-on and tagged
@@ -350,25 +350,25 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
     // (the chain's `git_root`, the same root hook discovery resolves from via
     // `workspace_key`), NOT cwd, so root-level hooks are gated even when launched
     // from a subdir. A repo-local hook file/dir is repo-controlled code-exec that
-    // must be gated — else a hooks-only clone (e.g. `.grok/hooks/evil.json`) would
+    // must be gated — else a hooks-only clone (e.g. `.Doggy/hooks/evil.json`) would
     // resolve trusted and run ungated. Presence mirrors discovery's "something to
     // gate" check.
     let hook_root = chain.git_root.as_deref().unwrap_or(cwd);
-    if path_present_or_uncertain(&hook_root.join(".grok").join("hooks"))
+    if path_present_or_uncertain(&hook_root.join(".Doggy").join("hooks"))
         || hook_root.join(".cursor").join("hooks.json").is_file()
     {
         hit!("hooks");
     }
     // Project PLUGIN dirs: project-scoped plugins are unified under folder-trust
     // too, so a repo-local plugin dir is repo-controlled code-exec (hooks/MCP)
-    // that must be gated — else a plugin clone (e.g. `.grok/plugins/evil/`, even
+    // that must be gated — else a plugin clone (e.g. `.Doggy/plugins/evil/`, even
     // one in a subdir launched via `cd sub && grok`) would resolve trusted and
     // run ungated. Uses the shared SSOT walk (cwd→git root) so detection matches
     // exactly what `discover_plugins` scans for Project scope (errs secure).
     if !xai_grok_agent::plugins::project_plugin_dirs_in(&chain.dirs).is_empty() {
         hit!("plugins");
     }
-    // Project AGENT dirs (`.grok/agents` / `.claude/agents`): a project agent
+    // Project AGENT dirs (`.Doggy/agents` / `.claude/agents`): a project agent
     // definition can carry an inline `hooks:` block (repo-controlled code-exec)
     // AND can SHADOW a built-in subagent by name, so an agents-only clone must
     // still be gated. Uses the shared SSOT walk (cwd→git root) so detection
@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn repo_configs_present_detects_grok_config_mcp_servers() {
         let tmp = repo_tmp();
-        let grok = tmp.path().join(".grok");
+        let grok = tmp.path().join(".Doggy");
         std::fs::create_dir_all(&grok).unwrap();
         std::fs::write(grok.join("config.toml"), "[mcp_servers.x]\ncommand=\"y\"\n").unwrap();
         assert!(repo_configs_present(tmp.path()));
@@ -541,7 +541,7 @@ mod tests {
     #[test]
     fn repo_configs_present_detects_grok_lsp_json() {
         let tmp = repo_tmp();
-        let grok = tmp.path().join(".grok");
+        let grok = tmp.path().join(".Doggy");
         std::fs::create_dir_all(&grok).unwrap();
         std::fs::write(grok.join("lsp.json"), "{}").unwrap();
         assert!(repo_configs_present(tmp.path()));
@@ -567,11 +567,11 @@ mod tests {
 
     #[test]
     fn repo_configs_present_detects_project_agents() {
-        // A `.grok/agents`-only clone must be gated: a project agent definition
+        // A `.Doggy/agents`-only clone must be gated: a project agent definition
         // can carry an inline `hooks:` block (code-exec) and can shadow a built-in
         // subagent by name.
         let tmp = repo_tmp();
-        std::fs::create_dir_all(tmp.path().join(".grok").join("agents")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".Doggy").join("agents")).unwrap();
         assert!(repo_configs_present(tmp.path()));
     }
 
@@ -589,7 +589,7 @@ mod tests {
         // detection walks cwd→git root exactly like agent discovery, so it must
         // still fire (a cwd-only probe would miss it).
         let tmp = repo_tmp();
-        std::fs::create_dir_all(tmp.path().join(".grok").join("agents")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".Doggy").join("agents")).unwrap();
         let subdir = tmp.path().join("crates").join("inner");
         std::fs::create_dir_all(&subdir).unwrap();
         assert!(repo_configs_present(&subdir));
@@ -614,14 +614,14 @@ mod tests {
         // A hooks-only repo (no MCP/LSP configs) must still be gated, so its
         // project hooks don't run ungated when the folder is untrusted.
         let tmp = repo_tmp();
-        std::fs::create_dir_all(tmp.path().join(".grok").join("hooks")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".Doggy").join("hooks")).unwrap();
         assert!(repo_configs_present(tmp.path()));
     }
 
     #[test]
     fn repo_configs_present_detects_project_hooks_file() {
         let tmp = repo_tmp();
-        let grok = tmp.path().join(".grok");
+        let grok = tmp.path().join(".Doggy");
         std::fs::create_dir_all(&grok).unwrap();
         std::fs::write(grok.join("hooks"), "{}").unwrap();
 
@@ -633,7 +633,7 @@ mod tests {
     #[test]
     fn repo_configs_present_detects_dangling_project_hooks_symlink() {
         let tmp = repo_tmp();
-        let grok = tmp.path().join(".grok");
+        let grok = tmp.path().join(".Doggy");
         std::fs::create_dir_all(&grok).unwrap();
         std::os::unix::fs::symlink("missing-hooks", grok.join("hooks")).unwrap();
 
@@ -647,7 +647,7 @@ mod tests {
         // the gate must still fire because discovery resolves hooks from the root
         // (the cwd-relative check this regresses would miss it).
         let tmp = repo_tmp();
-        std::fs::create_dir_all(tmp.path().join(".grok").join("hooks")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".Doggy").join("hooks")).unwrap();
         let subdir = tmp.path().join("crates").join("inner");
         std::fs::create_dir_all(&subdir).unwrap();
         assert!(repo_configs_present(&subdir));
@@ -658,7 +658,7 @@ mod tests {
         // A plugin-only repo (no MCP/LSP/hooks configs) must still be gated, so a
         // project plugin's hooks/MCP don't run ungated when the folder is untrusted.
         let tmp = repo_tmp();
-        std::fs::create_dir_all(tmp.path().join(".grok").join("plugins").join("x")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".Doggy").join("plugins").join("x")).unwrap();
         assert!(repo_configs_present(tmp.path()));
     }
 
@@ -669,7 +669,7 @@ mod tests {
         // discover_plugins, so a subdir-only plugin is not a fail-open hole.
         let tmp = repo_tmp();
         let subdir = tmp.path().join("packages").join("foo");
-        std::fs::create_dir_all(subdir.join(".grok").join("plugins").join("evil")).unwrap();
+        std::fs::create_dir_all(subdir.join(".Doggy").join("plugins").join("evil")).unwrap();
         assert!(repo_configs_present(&subdir));
     }
 
@@ -678,7 +678,7 @@ mod tests {
         // A project config whose `[mcp_servers]` table is empty has nothing to
         // gate, so it must not trip the gate.
         let tmp = repo_tmp();
-        let grok = tmp.path().join(".grok");
+        let grok = tmp.path().join(".Doggy");
         std::fs::create_dir_all(&grok).unwrap();
         std::fs::write(grok.join("config.toml"), "[mcp_servers]\n").unwrap();
         assert!(!repo_configs_present(tmp.path()));
@@ -690,7 +690,7 @@ mod tests {
         // dir, no MCP/LSP/hooks) must still be gated: those paths load as
         // auto-trusted ConfigPath plugins, so an ungated clone is a live RCE.
         let tmp = repo_tmp();
-        let grok = tmp.path().join(".grok");
+        let grok = tmp.path().join(".Doggy");
         std::fs::create_dir_all(&grok).unwrap();
         std::fs::write(grok.join("config.toml"), "[plugins]\npaths = [\"./x\"]\n").unwrap();
         assert!(repo_configs_present(tmp.path()));
@@ -701,7 +701,7 @@ mod tests {
         // An empty `[plugins].paths` (or a `[plugins]` table without `paths`)
         // contributes no plugin code-exec, so it must not trip the gate.
         let tmp = repo_tmp();
-        let grok = tmp.path().join(".grok");
+        let grok = tmp.path().join(".Doggy");
         std::fs::create_dir_all(&grok).unwrap();
         std::fs::write(grok.join("config.toml"), "[plugins]\npaths = []\n").unwrap();
         assert!(!repo_configs_present(tmp.path()));
@@ -713,10 +713,10 @@ mod tests {
         // (`repo_configs_present == !repo_config_kinds(..).is_empty()`) AND report
         // the kinds the single-source refactor added — `plugins` via
         // `[plugins].paths`, `claude` via `.claude/settings.json`, `agents` via
-        // `.grok/agents` — even when launched from a SUBDIR (the cwd→git-root walk
+        // `.Doggy/agents` — even when launched from a SUBDIR (the cwd→git-root walk
         // that `first_only` shares). Guards against silent drift between the two.
         let tmp = repo_tmp();
-        let grok = tmp.path().join(".grok");
+        let grok = tmp.path().join(".Doggy");
         std::fs::create_dir_all(grok.join("agents")).unwrap();
         std::fs::write(grok.join("config.toml"), "[plugins]\npaths = [\"./x\"]\n").unwrap();
         let claude = tmp.path().join(".claude");

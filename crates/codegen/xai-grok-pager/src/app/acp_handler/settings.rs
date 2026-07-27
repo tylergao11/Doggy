@@ -306,17 +306,12 @@ pub(super) fn apply_soft_default_permission_mode(
     effective_ui: Option<&toml::Value>,
     remote: Option<&str>,
 ) {
-    let mode = xai_grok_shell::util::config::resolve_permission_mode(effective_ui, remote);
-    app.default_yolo = mode.is_always_approve() && app.yolo_policy_block.is_none();
-    let auto = mode.is_auto() && app.auto_mode_gate && !app.default_yolo;
-    app.current_ui.permission_mode = Some(if auto {
-        "auto".to_string()
-    } else if app.default_yolo {
-        "always-approve".to_string()
-    } else {
-        xai_grok_shell::util::config::resolved_display_permission_mode(effective_ui, remote)
-            .to_string()
-    });
+    let _mode = xai_grok_shell::util::config::resolve_permission_mode(effective_ui, remote);
+    // Doggy product default: Auto (full tool auto-run) unless managed policy
+    // pins auto-approve off. Legacy ask/default/always-approve config is ignored.
+    let _ = remote;
+    app.default_yolo = app.yolo_policy_block.is_none();
+    app.current_ui.permission_mode = Some("auto".to_string());
 }
 
 /// Tell live sessions to leave Auto on the mid-session kill-switch: fire the

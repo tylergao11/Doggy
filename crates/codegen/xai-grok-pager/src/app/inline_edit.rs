@@ -174,8 +174,12 @@ impl AgentView {
     }
 
     /// Per-frame layout sync (before `prepare_layout`): refresh the height
-    /// override (textarea height), abandon the edit if the entry vanished,
-    /// and return the dim-from entry index.
+    /// override (textarea height + prompt vpad), abandon the edit if the
+    /// entry vanished, and return the dim-from entry index.
+    ///
+    /// Height always includes the same top/bottom vpad as a normal user
+    /// prompt (`assemble_height`), so opening the editor never squashes a
+    /// short prompt from 3 rows to 1.
     pub(super) fn sync_inline_edit_layout(&mut self, scrollback_width: u16) -> Option<usize> {
         let entry_id = self.inline_edit.as_ref()?.entry_id;
         let Some(idx) = self.scrollback.index_of_id(entry_id) else {
@@ -184,7 +188,9 @@ impl AgentView {
         };
         let ta_width = self.inline_edit_text_width(scrollback_width);
         let edit = self.inline_edit.as_ref()?;
-        let height = edit.textarea.desired_height(ta_width).max(1);
+        let content_h = edit.textarea.desired_height(ta_width).max(1);
+        let vpad = self.inline_edit_vpad_rows();
+        let height = content_h.saturating_add(vpad);
         self.scrollback
             .set_inline_edit_height(Some((entry_id, height)));
         Some(idx.saturating_add(1))
@@ -195,6 +201,17 @@ impl AgentView {
         let content_w = self.scrollback.entry_text_column_width(scrollback_width);
         let prefix_w = crate::glyphs::prompt_arrow().width() as u16;
         content_w.saturating_sub(prefix_w).max(1)
+    }
+
+    /// Rows of vertical padding around user-prompt content (0 or 2), matching
+    /// [`UserPromptBlock::has_vpad`] / `EntryRenderer::assemble_height`.
+    fn inline_edit_vpad_rows(&self) -> u16 {
+        let appearance = self.scrollback.appearance();
+        if appearance.scrollback.blocks.prompt.vpad && !appearance.prompt.compact {
+            2
+        } else {
+            0
+        }
     }
 
     /// Overlay-draw the editor over the edited entry (after the scrollback
@@ -241,15 +258,24 @@ impl AgentView {
                 .block_pad_left;
         let content_w = hl.content_width();
 
+        // Keep top/bottom vpad empty so the editor matches the unedited
+        // prompt chrome instead of painting from row 0 of a padded rect.
+        let vpad_top = if self.inline_edit_vpad_rows() > 0 { 1u16 } else { 0 };
+        let content_y = rect.y.saturating_add(vpad_top);
+        let content_h = rect
+            .height
+            .saturating_sub(self.inline_edit_vpad_rows())
+            .max(1);
+
         let prefix = crate::glyphs::prompt_arrow();
         let prefix_w = prefix.width() as u16;
-        buf.set_string(content_x, rect.y, prefix, theme.fg(theme.accent_user));
+        buf.set_string(content_x, content_y, prefix, theme.fg(theme.accent_user));
 
         let ta_area = Rect {
             x: content_x + prefix_w,
-            y: rect.y,
+            y: content_y,
             width: content_w.saturating_sub(prefix_w).max(1),
-            height: rect.height,
+            height: content_h,
         };
 
         let edit = self.inline_edit.as_mut()?;
@@ -392,6 +418,22 @@ mod tests {
         assert_eq!(block.text, "fix the bug");
     }
 
+    /// Short single-line prompts have vpad (content + 2). The height override
+    /// must keep that padding so Enter-to-edit never squashes 3 rows to 1.
+    #[test]
+    fn sync_inline_edit_layout_preserves_prompt_vpad_height() {
+        let mut agent = agent_with_prompt();
+        assert!(agent.enter_inline_edit(0));
+        agent.sync_inline_edit_layout(80);
+        let Some((_id, h)) = agent.scrollback.inline_edit_height() else {
+            panic!("expected height override while editing");
+        };
+        assert!(
+            h >= 3,
+            "short prompt with default vpad must stay ≥3 rows, got {h}"
+        );
+    }
+
     /// Typed keys reach the textarea (the intercept only handles
     /// Enter/Esc/Ctrl+C).
     #[test]
@@ -461,8 +503,8 @@ mod tests {
         assert!(edit.last_text_area.is_none(), "stale textarea rect dropped");
     }
 
-    /// The per-frame layout sync reserves the textarea's height and abandons
-    /// the edit when the entry disappears (e.g. transcript replaced).
+    /// The per-frame layout sync reserves the textarea's height (+ prompt
+    /// vpad) and abandons the edit when the entry disappears.
     #[test]
     fn sync_layout_reserves_height_and_survives_entry_removal() {
         let mut agent = agent_with_prompt();
@@ -472,9 +514,10 @@ mod tests {
         assert_eq!(dim_from, Some(1), "dim everything below the edited entry");
         let (id, h) = agent.scrollback.inline_edit_height().expect("override");
         assert_eq!(Some(id), agent.scrollback.entry(0).map(|e| e.id));
-        assert_eq!(h, 1, "single-line prompt: 1 text row");
+        // 1 content row + 2 vpad — never squash a short prompt to 1 row.
+        assert_eq!(h, 3, "single-line prompt: 1 text row + 2 vpad");
 
-        // Grow the text to several lines: the reserved height follows.
+        // Grow the text to several lines: the reserved height follows (+ vpad).
         agent
             .inline_edit
             .as_mut()
@@ -483,7 +526,7 @@ mod tests {
             .set_text("one\ntwo\nthree");
         agent.sync_inline_edit_layout(80);
         let (_, h) = agent.scrollback.inline_edit_height().expect("override");
-        assert_eq!(h, 3, "3 text rows");
+        assert_eq!(h, 5, "3 text rows + 2 vpad");
 
         // Entry vanishes → edit is abandoned and the override cleared.
         agent.scrollback.remove_from(0);

@@ -34,7 +34,7 @@ pub(crate) const WORD_SELECT_ACCEPT_CHORD: &str = "Ctrl+Y";
 /// enable now", seen-gated to [`WORD_SELECT_TIP_SEEN_CAP`] shows per session
 /// (in-memory).
 ///
-/// Fires when double-click runs the fold/nav path (default `flash` / `hold`)
+/// Fires when double-click runs the fold/nav path (`flash` / `hold`; default is `word_select`)
 /// so users who expected terminal-like word highlight learn about the setting
 /// — or flip it on the spot with the advertised chord.
 pub fn word_select_tip() -> EphemeralTip {

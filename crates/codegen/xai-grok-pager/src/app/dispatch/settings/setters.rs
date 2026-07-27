@@ -703,9 +703,9 @@ pub(in crate::app::dispatch) fn set_scroll_lines(app: &mut AppView, raw: i64) ->
         key: "scroll_lines",
         value: crate::settings::SettingValue::Int(clamped as i64),
         // prev=None (never configured) can't round-trip through
-        // SettingValue::Int — rolling back to an explicit 3 is the same
+        // SettingValue::Int — rolling back to an explicit 6 is the same
         // deliberate one-way door as the `d`-reset path.
-        rollback_value: crate::settings::SettingValue::Int(prev.unwrap_or(3) as i64),
+        rollback_value: crate::settings::SettingValue::Int(prev.unwrap_or(6) as i64),
     }]
 }
 

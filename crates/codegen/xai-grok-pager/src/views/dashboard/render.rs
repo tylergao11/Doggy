@@ -2689,12 +2689,13 @@ fn paint_dispatch_config_badge(
             color: Some(theme.accent_plan),
             bold: false,
         }),
-        DashboardDispatchMode::AlwaysApprove => flags.push(PromptFlag {
-            text: "always-approve",
+        DashboardDispatchMode::Auto
+        | DashboardDispatchMode::AlwaysApprove
+        | DashboardDispatchMode::Normal => flags.push(PromptFlag {
+            text: "auto",
             color: None,
             bold: false,
         }),
-        DashboardDispatchMode::Normal => {}
     }
 
     if model_label.is_empty() && flags.is_empty() && !state.multiline_mode {

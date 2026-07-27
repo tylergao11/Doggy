@@ -689,13 +689,13 @@ mod tests {
             url: None,
             url_raw: None,
             timeout_ms: 5000,
-            source_dir: std::path::PathBuf::from("/project/.grok/hooks"),
+            source_dir: std::path::PathBuf::from("/project/.Doggy/hooks"),
             extra_env: std::collections::HashMap::new(),
         };
         assert_eq!(
             resolve_command_path(&spec),
             Some(std::path::PathBuf::from(
-                "/project/.grok/hooks/bin/check.sh"
+                "/project/.Doggy/hooks/bin/check.sh"
             ))
         );
     }
@@ -1159,8 +1159,8 @@ mod tests {
     #[cfg(unix)]
     async fn test_tilde_expansion_runs_via_shell() {
         let tmp = tempfile::tempdir().unwrap();
-        // Create the script at <tmp>/.grok-test-hooks-gb856/tilde-test.sh
-        let hook_dir = tmp.path().join(".grok-test-hooks-gb856");
+        // Create the script at <tmp>/.Doggy-test-hooks-gb856/tilde-test.sh
+        let hook_dir = tmp.path().join(".Doggy-test-hooks-gb856");
         std::fs::create_dir_all(&hook_dir).unwrap();
         let script = hook_dir.join("tilde-test.sh");
         std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
@@ -1171,7 +1171,7 @@ mod tests {
             std::fs::set_permissions(&script, perms).unwrap();
         }
 
-        // Inject HOME via extra_env so `sh -c "~/.grok-test-hooks-gb856/..."`
+        // Inject HOME via extra_env so `sh -c "~/.Doggy-test-hooks-gb856/..."`
         // expands `~` to the temp dir. This avoids depending on the system
         // HOME, which is absent in hermetic sandboxed test runners.
         let mut extra_env = std::collections::HashMap::new();
@@ -1188,9 +1188,9 @@ mod tests {
             matcher: None,
             enabled: true,
             command: Some(std::path::PathBuf::from(
-                "~/.grok-test-hooks-gb856/tilde-test.sh",
+                "~/.Doggy-test-hooks-gb856/tilde-test.sh",
             )),
-            command_raw: Some("~/.grok-test-hooks-gb856/tilde-test.sh".to_string()),
+            command_raw: Some("~/.Doggy-test-hooks-gb856/tilde-test.sh".to_string()),
             url: None,
             url_raw: None,
             timeout_ms: 5000,

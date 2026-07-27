@@ -59,10 +59,20 @@ rustflags = [
 ]
 
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "force-unwind-tables=yes", "-C", "target-feature=+crt-static"]
+rustflags = [
+    "-C", "force-unwind-tables=yes",
+    "-C", "target-feature=+crt-static",
+    # Huge binary: MSVC link.exe hits LNK1318 (PDB size limit) with /DEBUG.
+    # Disable PDB generation so release/debug links succeed on Windows.
+    "-C", "link-arg=/DEBUG:NONE",
+]
 
 [target.aarch64-pc-windows-msvc]
-rustflags = ["-C", "force-unwind-tables=yes", "-C", "target-feature=+crt-static"]
+rustflags = [
+    "-C", "force-unwind-tables=yes",
+    "-C", "target-feature=+crt-static",
+    "-C", "link-arg=/DEBUG:NONE",
+]
 
 
 # jemalloc page size for Apple Silicon (macOS aarch64 uses 16KB pages = 2^14).
@@ -79,3 +89,6 @@ AARCH64_APPLE_DARWIN_JEMALLOC_SYS_WITH_LG_PAGE = "14"
 AARCH64_UNKNOWN_LINUX_GNU_JEMALLOC_SYS_WITH_LG_PAGE = "16"
 AARCH64_UNKNOWN_LINUX_MUSL_JEMALLOC_SYS_WITH_LG_PAGE = "16"
 AARCH64_UNKNOWN_LINUX_MUSL_JEMALLOC_SYS_WITH_BACKGROUND_THREADS = "0"
+# Local Windows protoc (downloaded once under .tools/; ignored by git).
+# Override with a system PROTOC if you prefer.
+PROTOC = { value = ".tools/protoc/bin/protoc.exe", relative = true }

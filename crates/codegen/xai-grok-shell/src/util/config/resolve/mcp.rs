@@ -13,7 +13,7 @@ use toml::Value as TomlValue;
 /// | requirement  | `[features] mcp_liveness_watchers` in `requirements.toml`       |
 /// | cli          | (none — no CLI flag)                                            |
 /// | env          | `GROK_MCP_LIVENESS_WATCHERS` (handled by `BoolFlag::env`)       |
-/// | config       | `[features] mcp_liveness_watchers` in `~/.grok/config.toml`     |
+/// | config       | `[features] mcp_liveness_watchers` in `~/.Doggy/config.toml`     |
 /// | managed      | `[features] mcp_liveness_watchers` in `managed_config.toml`     |
 /// | feature_flag | (none yet — remote settings plumbing TBD)                            |
 /// | default      | `true`                                                          |
@@ -51,7 +51,7 @@ pub fn resolve_mcp_liveness_watchers(
 /// | requirement  | `[features] mcp_auto_restart` in `requirements.toml`            |
 /// | cli          | (none — no CLI flag)                                            |
 /// | env          | `GROK_MCP_AUTO_RESTART` (handled by `BoolFlag::env`)            |
-/// | config       | `[features] mcp_auto_restart` in `~/.grok/config.toml`          |
+/// | config       | `[features] mcp_auto_restart` in `~/.Doggy/config.toml`          |
 /// | managed      | `[features] mcp_auto_restart` in `managed_config.toml`          |
 /// | feature_flag | (none yet — remote settings plumbing TBD)                            |
 /// | default      | `true`                                                          |
@@ -89,7 +89,7 @@ pub fn resolve_mcp_auto_restart(
 /// | requirement  | `[features] mcp_push_server_status` in `requirements.toml`      |
 /// | cli          | (none — no CLI flag)                                            |
 /// | env          | `GROK_MCP_PUSH_SERVER_STATUS` (handled by `BoolFlag::env`)      |
-/// | config       | `[features] mcp_push_server_status` in `~/.grok/config.toml`    |
+/// | config       | `[features] mcp_push_server_status` in `~/.Doggy/config.toml`    |
 /// | managed      | `[features] mcp_push_server_status` in `managed_config.toml`    |
 /// | feature_flag | (none yet — remote settings plumbing TBD)                            |
 /// | default      | `true`                                                          |
@@ -128,7 +128,7 @@ pub fn resolve_mcp_push_server_status(
 /// | requirement  | `[features] mcp_recursive_config_watch` in `requirements.toml`      |
 /// | cli          | (none — no CLI flag)                                                |
 /// | env          | `GROK_MCP_RECURSIVE_CONFIG_WATCH` (handled by `BoolFlag::env`)      |
-/// | config       | `[features] mcp_recursive_config_watch` in `~/.grok/config.toml`    |
+/// | config       | `[features] mcp_recursive_config_watch` in `~/.Doggy/config.toml`    |
 /// | managed      | `[features] mcp_recursive_config_watch` in `managed_config.toml`    |
 /// | feature_flag | (none yet — remote settings plumbing TBD)                                |
 /// | default      | `true`                                                              |
@@ -325,7 +325,7 @@ pub fn resolve_max_mcp_output_bytes(remote: Option<u64>) -> usize {
 }
 
 /// Project tier of the MCP output cap: `[mcp] max_output_bytes` from the
-/// `.grok/config.toml` chain (`cwd` → git root), deepest file wins.
+/// `.Doggy/config.toml` chain (`cwd` → git root), deepest file wins.
 ///
 /// Folder-trust-gated: an untrusted checkout must not raise (context-stuffing
 /// / cost vector) or lower the cap, matching how project plugin paths and
@@ -436,10 +436,10 @@ mod max_mcp_output_bytes_tests {
         // Make it a git repo so the chain walks subdir → root.
         git2::Repository::init(root).unwrap();
         let sub = root.join("crates").join("thing");
-        std::fs::create_dir_all(sub.join(".grok")).unwrap();
-        std::fs::create_dir_all(root.join(".grok")).unwrap();
+        std::fs::create_dir_all(sub.join(".Doggy")).unwrap();
+        std::fs::create_dir_all(root.join(".Doggy")).unwrap();
         std::fs::write(
-            root.join(".grok/config.toml"),
+            root.join(".Doggy/config.toml"),
             "[mcp]\nmax_output_bytes = 30000\n",
         )
         .unwrap();
@@ -449,18 +449,18 @@ mod max_mcp_output_bytes_tests {
 
         // The subdir sets it too → deeper file wins.
         std::fs::write(
-            sub.join(".grok/config.toml"),
+            sub.join(".Doggy/config.toml"),
             "[mcp]\nmax_output_bytes = 50000\n",
         )
         .unwrap();
         assert_eq!(super::project_max_mcp_output_bytes(&sub), Some(50_000));
 
         // A deeper file *without* the key does not mask the root value.
-        std::fs::write(sub.join(".grok/config.toml"), "[ui]\nvim_mode = true\n").unwrap();
+        std::fs::write(sub.join(".Doggy/config.toml"), "[ui]\nvim_mode = true\n").unwrap();
         assert_eq!(super::project_max_mcp_output_bytes(&sub), Some(30_000));
 
         // No .grok files with the key anywhere → None.
-        std::fs::remove_file(root.join(".grok/config.toml")).unwrap();
+        std::fs::remove_file(root.join(".Doggy/config.toml")).unwrap();
         assert_eq!(super::project_max_mcp_output_bytes(&sub), None);
     }
 }

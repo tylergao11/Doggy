@@ -114,7 +114,7 @@ fn trusted_local_refresh_surfaces_new_agent_via_discovery() {
     // symlink (macOS `/var` -> `/private/var`).
     let home_tmp = TempDir::new().unwrap();
     let home = dunce::canonicalize(home_tmp.path()).unwrap();
-    let grok_home = home.join(".grok");
+    let grok_home = home.join(".Doggy");
     let _home_guard = EnvVarGuard::set("HOME", &home);
     let _grok_guard = EnvVarGuard::set("GROK_HOME", &grok_home);
 
@@ -214,7 +214,7 @@ async fn headless_session_refreshes_trusted_local_plugin_and_writes_session_json
     // symlink (macOS `/var` -> `/private/var`).
     let home_tmp = TempDir::new().unwrap();
     let home = dunce::canonicalize(home_tmp.path()).unwrap();
-    let grok_home = home.join(".grok");
+    let grok_home = home.join(".Doggy");
     std::fs::create_dir_all(&grok_home).unwrap();
 
     let source = home

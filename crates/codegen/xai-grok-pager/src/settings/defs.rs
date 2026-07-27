@@ -91,31 +91,12 @@ const THEME_CHOICES: &[EnumChoice] = &[
 // it lives on its own `plan_mode` setting.
 // ---------------------------------------------------------------------------
 
-// Choice order: safe → classifier → unsafe (Default → Ask → Auto → Always approve).
-// "Always approve" at the end creates a speed bump against
-// accidental selection.
+// Doggy: only Auto (full tool auto-run). Plan is a separate session form.
 const PERMISSION_MODE_CHOICES: &[EnumChoice] = &[
-    // "default" = agent's default behavior. Same as "ask" at runtime;
-    // distinct on disk and in the modal indicator.
-    EnumChoice {
-        canonical: "default",
-        display: "Default",
-        description: "Use the agent's default permission behavior (currently equivalent to Ask).",
-    },
-    EnumChoice {
-        canonical: "ask",
-        display: "Ask",
-        description: "Prompt for permission before tool actions.",
-    },
     EnumChoice {
         canonical: "auto",
         display: "Auto",
-        description: "LLM classifier approves safe tools; dangerous actions may still prompt or deny.",
-    },
-    EnumChoice {
-        canonical: "always-approve",
-        display: "Always approve",
-        description: "Auto-approve every tool action. Skips ALL permission prompts.",
+        description: "Tools auto-run without permission prompts. Pair with Plan mode (Shift+Tab) when you want plan-only edits.",
     },
 ];
 
@@ -263,19 +244,19 @@ const SCROLL_MODE_CHOICES: &[EnumChoice] = &[
 
 const TEXT_SELECTION_CHOICES: &[EnumChoice] = &[
     EnumChoice {
+        canonical: TextSelection::WordSelect.as_canonical(),
+        display: "Word select (terminal-like)",
+        description: "Double-click selects & copies a word, triple-click a line; selection stays until dismissed. Default.",
+    },
+    EnumChoice {
         canonical: TextSelection::Flash.as_canonical(),
         display: "Flash after copy",
-        description: "Brief highlight on mouse-up, then clear. Double-click toggles fold. Default.",
+        description: "Brief highlight on mouse-up, then clear. Double-click toggles fold.",
     },
     EnumChoice {
         canonical: TextSelection::Hold.as_canonical(),
         display: "Hold until dismissed",
         description: "Keep the selection visible until Esc, click, or scroll. Double-click toggles fold.",
-    },
-    EnumChoice {
-        canonical: TextSelection::WordSelect.as_canonical(),
-        display: "Word select (terminal-like)",
-        description: "Double-click selects & copies a word, triple-click a line; selection stays until dismissed.",
     },
 ];
 
@@ -1032,9 +1013,10 @@ pub fn default_settings() -> Vec<SettingMeta> {
             hidden_in_minimal: false,
         },
         // SHELL-owned, persisted to `[ui].scroll_lines`. One knob for BOTH
-        // wheel and trackpad lines-per-tick; the registered default 3 matches
-        // most terminal profiles, but until the user first commits a value
-        // the per-terminal profile stays in charge (cache unset → no override).
+        // wheel and trackpad lines-per-tick; the registered default 6 matches
+        // the terminal profile default, but until the user first commits a
+        // value the per-terminal profile stays in charge (cache unset → no
+        // override).
         SettingMeta {
             key: "scroll_lines",
             category: SettingCategory::Mouse,
@@ -1046,7 +1028,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
                 "scroll", "lines", "tick", "notch", "wheel", "trackpad", "mouse",
             ],
             kind: SettingKind::Int {
-                default: ui_default.scroll_lines.map(i64::from).unwrap_or(3),
+                default: ui_default.scroll_lines.map(i64::from).unwrap_or(6),
                 min: 1,
                 max: 10,
             },
@@ -1098,7 +1080,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
                 "terminal",
             ],
             kind: SettingKind::Enum {
-                default: TextSelection::Flash.as_canonical(),
+                default: TextSelection::WordSelect.as_canonical(),
                 choices: TEXT_SELECTION_CHOICES,
                 supports_preview: false,
             },

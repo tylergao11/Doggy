@@ -489,7 +489,7 @@ fn paint_peek_config_badge(
         });
     } else if panel.auto_approve {
         flags.push(PromptFlag {
-            text: "always-approve",
+            text: "auto",
             color: None,
             bold: false,
         });

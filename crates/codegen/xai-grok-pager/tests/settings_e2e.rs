@@ -6451,7 +6451,7 @@ fn enter_on_keep_text_selection_row_enters_picking_enum() {
     // The picker's `original_value` is read from the process-wide cache; pin it
     // to the default so a sibling test's `set_keep_text_selection` can't leak in.
     xai_grok_pager::appearance::cache::set_keep_text_selection(
-        xai_grok_pager::appearance::TextSelection::Flash,
+        xai_grok_pager::appearance::TextSelection::WordSelect,
     );
     let mut s = make_state();
     navigate_to(&mut s, "keep_text_selection");
@@ -6469,8 +6469,8 @@ fn enter_on_keep_text_selection_row_enters_picking_enum() {
             assert_eq!(*key, "keep_text_selection");
             assert_eq!(
                 original_value,
-                &SettingValue::Enum("flash"),
-                "default keep_text_selection → original 'flash'"
+                &SettingValue::Enum("word_select"),
+                "default keep_text_selection → original 'word_select'"
             );
         }
         other => panic!("expected PickingEnum mode, got {other:?}"),
@@ -6505,20 +6505,20 @@ fn keep_text_selection_picker_nav_does_not_dispatch_preview() {
 fn keep_text_selection_picker_enter_dispatches_set_commit() {
     use xai_grok_pager::appearance::TextSelection;
 
-    // Pin the cache-backed live value so the picker seeds at flash (idx 0)
-    // regardless of any sibling test that set hold/word_select on this thread.
-    xai_grok_pager::appearance::cache::set_keep_text_selection(TextSelection::Flash);
+    // Pin the cache-backed live value so the picker seeds at word_select (idx 0)
+    // regardless of any sibling test that set flash/hold on this thread.
+    xai_grok_pager::appearance::cache::set_keep_text_selection(TextSelection::WordSelect);
     let mut s = make_state();
     navigate_to(&mut s, "keep_text_selection");
     let _ = handle_settings_key(&mut s, &press(KeyCode::Enter));
-    // flash (idx 0); Down → hold (idx 1), Enter commits.
+    // word_select (idx 0); Down → flash (idx 1), Enter commits.
     let _ = handle_settings_key(&mut s, &press(KeyCode::Down));
     let outcome = handle_settings_key(&mut s, &press(KeyCode::Enter));
     match outcome {
         SettingsKeyOutcome::Action(Action::SetKeepTextSelection(kind)) => {
-            assert_eq!(kind, TextSelection::Hold);
+            assert_eq!(kind, TextSelection::Flash);
         }
-        other => panic!("expected SetKeepTextSelection(Hold), got {other:?}"),
+        other => panic!("expected SetKeepTextSelection(Flash), got {other:?}"),
     }
 }
 
@@ -6545,8 +6545,8 @@ fn keep_text_selection_choices_use_canonical_strings() {
     let canonicals: Vec<_> = choices.iter().map(|c| c.canonical).collect();
     assert_eq!(
         canonicals,
-        vec!["flash", "hold", "word_select"],
-        "keep_text_selection catalog must be exactly [flash, hold, word_select] in order"
+        vec!["word_select", "flash", "hold"],
+        "keep_text_selection catalog must be exactly [word_select, flash, hold] in order"
     );
 }
 

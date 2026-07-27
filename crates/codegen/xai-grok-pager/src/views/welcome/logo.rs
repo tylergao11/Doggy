@@ -1,8 +1,9 @@
 //! Doggy brand logo for the welcome screen.
 //!
-//! Source art: CodeDoggy `tui/doggy_brand.py` neon couple portrait (palette
-//! pixel map → half-block terminal glyphs). Replaces the former Grok braille
-//! symbol so the product shows Doggy branding, not SpaceXAI/Grok.
+//! Faithful port of CodeDoggy `tui/doggy_brand.py`:
+//! base 52×60 palette map + female face/mask/bow overlays, then half-block
+//! glyphs. Facial detail overlays are **required** — without them the female
+//! face dissolves into tan fur after half-block downsampling.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -10,7 +11,8 @@ use ratatui::style::{Color, Style};
 
 use crate::theme::Theme;
 
-/// Full-resolution couple art (52×60 palette chars). From CodeDoggy.
+/// Full-resolution couple art (52×60 palette chars). From CodeDoggy
+/// `_DOGGY_COUPLE_ART` (before animate overlays).
 const COUPLE_ART: &str = include_str!("../../../assets/logo/doggy_couple.txt");
 
 /// Wordmark used when the terminal is too short for the portrait.
@@ -23,6 +25,91 @@ const FULL_LOGO_MIN_HEIGHT: u16 = 40;
 
 /// Source rows for the "small" tier (top of portrait, half-blocked).
 const SMALL_SOURCE_ROWS: usize = 28; // → 14 terminal rows
+
+/// CodeDoggy `_DOGGY_COUPLE_FRAMES`.
+const COUPLE_FRAMES: u64 = 12;
+
+// --- Face detail overlays (CodeDoggy `_animate_doggy_couple`) ----------------
+// High-priority facial pixels survive half-block downsampling instead of
+// dissolving into surrounding tan fur.
+
+/// `(x, y, ch)` — CodeDoggy `_DOGGY_FEMALE_EYE_DETAILS`.
+const FEMALE_EYE_DETAILS: &[(usize, usize, char)] = &[
+    (32, 13, 'K'),
+    (33, 13, 'K'),
+    (34, 13, 'K'),
+    (32, 14, 'K'),
+    (33, 14, 'W'),
+    (34, 14, 'K'),
+    (38, 13, 'K'),
+    (39, 13, 'K'),
+    (40, 13, 'K'),
+    (38, 14, 'K'),
+    (39, 14, 'W'),
+    (40, 14, 'K'),
+];
+
+/// `(y, x_start, x_end)` inclusive — `_DOGGY_FEMALE_MASK_SPANS`.
+const FEMALE_MASK_SPANS: &[(usize, usize, usize)] = &[
+    (16, 33, 40),
+    (17, 31, 42),
+    (18, 31, 42),
+    (19, 31, 42),
+    (20, 33, 40),
+];
+
+/// `(x, y, ch)` — `_DOGGY_FEMALE_MASK_HIGHLIGHTS`.
+const FEMALE_MASK_HIGHLIGHTS: &[(usize, usize, char)] = &[
+    (29, 17, 'm'),
+    (30, 17, 'm'),
+    (43, 17, 'm'),
+    (44, 17, 'm'),
+    (34, 18, 'P'),
+    (35, 18, 'P'),
+    (36, 18, 'P'),
+    (37, 18, 'P'),
+    (38, 18, 'P'),
+    (39, 18, 'P'),
+];
+
+/// `(y, x_start, x_end, ch)` inclusive — `_DOGGY_FEMALE_CROWN_SPANS`.
+const FEMALE_CROWN_SPANS: &[(usize, usize, usize, char)] = &[
+    (7, 36, 42, 'H'),
+    (8, 34, 44, 'H'),
+    (9, 32, 45, 'H'),
+];
+
+/// `(x, y, ch)` — `_DOGGY_FEMALE_BOW_DETAILS`.
+const FEMALE_BOW_DETAILS: &[(usize, usize, char)] = &[
+    (42, 7, 'M'),
+    (43, 7, 'M'),
+    (46, 7, 'M'),
+    (47, 7, 'M'),
+    (42, 8, 'M'),
+    (43, 8, 'M'),
+    (44, 8, 'M'),
+    (45, 8, 'P'),
+    (46, 8, 'M'),
+    (47, 8, 'M'),
+    (48, 8, 'M'),
+    (43, 9, 'M'),
+    (44, 9, 'M'),
+    (45, 9, 'P'),
+    (46, 9, 'M'),
+    (47, 9, 'M'),
+];
+
+/// `(x, y)` — `_DOGGY_CHAIN_DETAILS` (gold jewellery blink).
+const CHAIN_DETAILS: &[(usize, usize)] = &[
+    (17, 20),
+    (18, 21),
+    (19, 22),
+    (23, 20),
+    (22, 21),
+    (21, 22),
+    (20, 23),
+    (36, 23),
+];
 
 fn logo_hidden() -> bool {
     // Half-block art is ASCII-block based (▀▄█), not braille — show even on
@@ -133,7 +220,8 @@ fn wordmark_mode(window_height: u16) -> bool {
     logo_hidden() || window_height < SMALL_LOGO_MIN_HEIGHT
 }
 
-/// Animation frame for welcome redraw throttling (chain blink).
+/// Animation frame for welcome redraw throttling (chain / bow blink).
+/// Matches CodeDoggy: `int(time.monotonic() * 5) % 12`.
 pub fn shimmer_frame() -> u64 {
     use std::sync::OnceLock;
     use std::time::Instant;
@@ -144,40 +232,87 @@ pub fn shimmer_frame() -> u64 {
     (START.get_or_init(Instant::now).elapsed().as_secs_f32() * 5.0) as u64
 }
 
-fn apply_chain_blink(source: &mut [String], frame: u64) {
-    // Lightweight jewellery blink — same idea as CodeDoggy chain details.
-    const CHAIN: &[(usize, usize)] = &[
-        (17, 20),
-        (18, 21),
-        (19, 22),
-        (23, 20),
-        (22, 21),
-        (21, 22),
-        (20, 23),
-        (36, 23),
-    ];
-    let phase = (frame as usize) % 12;
-    for (i, &(x, y)) in CHAIN.iter().enumerate() {
-        if y >= source.len() {
-            continue;
-        }
-        let row = &mut source[y];
-        if x >= row.chars().count() {
-            continue;
-        }
-        let ch = if i == phase % CHAIN.len() { 'T' } else { 'Y' };
-        let mut chars: Vec<char> = row.chars().collect();
-        if x < chars.len() {
-            chars[x] = ch;
-            *row = chars.into_iter().collect();
+fn put_pixel(canvas: &mut [Vec<char>], x: usize, y: usize, value: char) {
+    if y < canvas.len() && x < canvas[y].len() {
+        canvas[y][x] = value;
+    }
+}
+
+/// CodeDoggy `_animate_doggy_couple`: crown, bow, **eyes**, pink mask, chain.
+/// Base art alone is not enough — half-block drops female face without this.
+fn animate_doggy_couple(source: &[&str], frame: u64) -> Vec<String> {
+    let mut canvas: Vec<Vec<char>> = source
+        .iter()
+        .map(|row| row.chars().collect())
+        .collect();
+    if canvas.is_empty() {
+        return Vec::new();
+    }
+    let height = canvas.len();
+    let width = canvas[0].len();
+    let phase = (frame % COUPLE_FRAMES) as usize;
+
+    for &(y, start, end, value) in FEMALE_CROWN_SPANS {
+        if y < height {
+            for x in start..=end.min(width.saturating_sub(1)) {
+                put_pixel(&mut canvas, x, y, value);
+            }
         }
     }
+
+    for &(x, y, value) in FEMALE_BOW_DETAILS {
+        put_pixel(&mut canvas, x, y, value);
+    }
+
+    for &(x, y, value) in FEMALE_EYE_DETAILS {
+        put_pixel(&mut canvas, x, y, value);
+    }
+
+    for &(y, start, end) in FEMALE_MASK_SPANS {
+        if y < height {
+            for x in start..=end.min(width.saturating_sub(1)) {
+                let ch = if x == start || x == end { 'm' } else { 'M' };
+                put_pixel(&mut canvas, x, y, ch);
+            }
+        }
+    }
+
+    for &(x, y, value) in FEMALE_MASK_HIGHLIGHTS {
+        put_pixel(&mut canvas, x, y, value);
+    }
+
+    for (i, &(x, y)) in CHAIN_DETAILS.iter().enumerate() {
+        let ch = if i == phase % CHAIN_DETAILS.len() {
+            'T'
+        } else {
+            'Y'
+        };
+        put_pixel(&mut canvas, x, y, ch);
+    }
+
+    // Bow pulse: one M pixel cycles to hot pink, same as CodeDoggy.
+    let mut bow_pixels: Vec<(usize, usize)> = Vec::new();
+    for y in 0..height.min(14) {
+        for x in 38..width {
+            if canvas[y][x] == 'M' {
+                bow_pixels.push((x, y));
+            }
+        }
+    }
+    if !bow_pixels.is_empty() {
+        let (x, y) = bow_pixels[(phase / 2) % bow_pixels.len()];
+        put_pixel(&mut canvas, x, y, 'P');
+    }
+
+    canvas
+        .into_iter()
+        .map(|row| row.into_iter().collect())
+        .collect()
 }
 
 fn render_portrait(area: Rect, buf: &mut Buffer, source: &[&str]) {
     let frame = shimmer_frame();
-    let mut owned: Vec<String> = source.iter().map(|s| (*s).to_string()).collect();
-    apply_chain_blink(&mut owned, frame);
+    let owned = animate_doggy_couple(source, frame);
     let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
     let term_rows = to_term_rows(&refs);
     if term_rows.is_empty() || area.width == 0 || area.height == 0 {
@@ -326,6 +461,25 @@ mod tests {
         let rows = art_rows();
         assert!(rows.len() >= SMALL_SOURCE_ROWS);
         assert_eq!(rows[0].chars().count(), 52);
+    }
+
+    #[test]
+    fn animate_applies_female_eye_details() {
+        // Without overlays the female face is just tan fur after half-block.
+        // CodeDoggy paints K/W eye pixels at (33,14) and (39,14).
+        let rows = art_rows();
+        let refs: Vec<&str> = rows.iter().copied().collect();
+        let animated = animate_doggy_couple(&refs, 0);
+        assert!(animated.len() > 14);
+        let r13: Vec<char> = animated[13].chars().collect();
+        let r14: Vec<char> = animated[14].chars().collect();
+        assert_eq!(r13[33], 'K', "left eye lid/brow");
+        assert_eq!(r14[33], 'W', "left eye highlight");
+        assert_eq!(r13[39], 'K', "right eye lid/brow");
+        assert_eq!(r14[39], 'W', "right eye highlight");
+        // Pink mask body on row 17 interior.
+        let r17: Vec<char> = animated[17].chars().collect();
+        assert_eq!(r17[35], 'M', "pink mask interior");
     }
 
     #[test]

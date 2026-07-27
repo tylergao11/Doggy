@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn hidden_dir_positive() {
         assert!(is_under_hidden_dir(
-            &PathBuf::from("/workspace/.grok/worktrees/abc/src/main.rs"),
+            &PathBuf::from("/workspace/.Doggy/worktrees/abc/src/main.rs"),
             &PathBuf::from("/workspace"),
         ));
     }

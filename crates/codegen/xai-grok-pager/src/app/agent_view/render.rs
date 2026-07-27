@@ -151,7 +151,7 @@ impl AgentView {
                             };
                             hints.push(HintItem::new(key!('f', CONTROL), label));
                         }
-                        hints.push(HintItem::new(key!('o', CONTROL), "always-approve"));
+                        hints.push(HintItem::new(key!('o', CONTROL), "auto"));
                         hints.push(HintItem::new(key!('c', CONTROL), "cancel"));
                         hints
                     }
@@ -2166,7 +2166,7 @@ impl AgentView {
         }
         if self.session.is_yolo() && !effective_plan {
             mode_flags_vec.push(PromptFlag {
-                text: "always-approve",
+                text: "auto",
                 color: None,
                 bold: false,
             });
@@ -3088,7 +3088,7 @@ impl AgentView {
                             };
                             hints.push(HintItem::new(key!('f', CONTROL), label));
                         }
-                        hints.push(HintItem::new(key!('o', CONTROL), "always-approve"));
+                        hints.push(HintItem::new(key!('o', CONTROL), "auto"));
                         hints.push(HintItem::new(key!('c', CONTROL), "cancel"));
                         hints
                     }

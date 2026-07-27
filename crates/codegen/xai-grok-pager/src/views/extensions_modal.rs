@@ -2451,7 +2451,7 @@ pub fn derive_source_label(source_dir: &str) -> (String, bool) {
     let grok = xai_grok_config::grok_home();
     let source_path = std::path::Path::new(source_dir);
     // Plugin / installed-plugin dirs, under the user grok home (GROK_HOME-aware)
-    // or a project-scoped `{cwd}/.grok/<subdir>/`. Returns the first path
+    // or a project-scoped `{cwd}/.Doggy/<subdir>/`. Returns the first path
     // component after the subdir (the plugin's install directory name).
     let plugin_name = |subdir: &str| -> Option<String> {
         let first_comp = |p: &std::path::Path| {
@@ -2474,7 +2474,7 @@ pub fn derive_source_label(source_dir: &str) -> (String, bool) {
             .collect();
         comps
             .windows(3)
-            .find(|w| w[0] == ".grok" && w[1] == subdir && !w[2].is_empty())
+            .find(|w| w[0] == ".Doggy" && w[1] == subdir && !w[2].is_empty())
             .map(|w| w[2].clone())
     };
     if let Some(name) = plugin_name("plugins").or_else(|| plugin_name("installed-plugins")) {
@@ -2491,7 +2491,7 @@ pub fn derive_source_label(source_dir: &str) -> (String, bool) {
         return ("Claude settings".into(), false);
     }
     // Project hooks
-    if source_dir.ends_with("/.grok/hooks") || source_dir.contains("/.grok/hooks/") {
+    if source_dir.ends_with("/.Doggy/hooks") || source_dir.contains("/.Doggy/hooks/") {
         return ("Project hooks".into(), false);
     }
     // Custom directory — removable
@@ -2574,8 +2574,8 @@ fn skill_source_str(skill: &SkillInfo) -> String {
             }
             xai_grok_tools::types::config_source::ConfigSource::Project { path } => {
                 let s = path.display().to_string();
-                if s.contains("/.grok/") {
-                    ".grok/skills".into()
+                if s.contains("/.Doggy/") {
+                    ".Doggy/skills".into()
                 } else if s.contains("/.claude/") {
                     ".claude/skills".into()
                 } else {
@@ -4188,15 +4188,15 @@ mod tests {
 
     #[test]
     fn derive_source_label_detects_project_scoped_plugins() {
-        // Regression: project-scoped `{cwd}/.grok/plugins/<name>/` must label as
+        // Regression: project-scoped `{cwd}/.Doggy/plugins/<name>/` must label as
         // a (non-removable) plugin, not a removable "Custom" source. The user
         // grok-home branch is GROK_HOME-aware; this covers the project fallback.
-        let (label, is_custom) = derive_source_label("/repo/work/.grok/plugins/my-plugin/hooks");
+        let (label, is_custom) = derive_source_label("/repo/work/.Doggy/plugins/my-plugin/hooks");
         assert_eq!(label, "Plugin: my-plugin");
         assert!(!is_custom);
 
         let (label, is_custom) =
-            derive_source_label("/repo/work/.grok/installed-plugins/vendor-abc123/skills");
+            derive_source_label("/repo/work/.Doggy/installed-plugins/vendor-abc123/skills");
         assert_eq!(label, "Plugin: vendor-abc123");
         assert!(!is_custom);
     }
@@ -5820,7 +5820,7 @@ mod tests {
         xai_hooks_plugins_types::MarketplaceScanResult {
             source_name: "local-plugins".into(),
             source_kind: "local".into(),
-            source_url_or_path: "/home/user/.grok/marketplace/local".into(),
+            source_url_or_path: "/home/user/.Doggy/marketplace/local".into(),
             plugins: vec![
                 TestPlugin {
                     name: "my-linter",

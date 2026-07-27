@@ -408,7 +408,7 @@ pub struct Cwd(pub PathBuf);
 ///
 /// Set by the session layer (from `PlanModeTracker::plan_file_path()`);
 /// read by `ExitPlanMode` to locate the plan on disk. When absent the
-/// tool falls back to `Cwd/.grok/plan.md`.
+/// tool falls back to `Cwd/.Doggy/plan.md`.
 #[derive(Debug, Clone)]
 pub struct PlanFilePath(pub PathBuf);
 /// Default plan-file path (relative to the workspace root) used when no
@@ -420,7 +420,7 @@ pub const PLAN_FILE_RELATIVE_PATH: &str = ".grok/plan.md";
 /// callers that write/seed never create a file under the process CWD; it is
 /// `None` for the display-only relative fallback. `display` is the
 /// model-facing path string. Resolution: [`PlanFilePath`] (as-is), else
-/// [`Cwd`]`/.grok/plan.md`, else the bare relative `.grok/plan.md`.
+/// [`Cwd`]`/.Doggy/plan.md`, else the bare relative `.grok/plan.md`.
 pub(crate) fn resolve_plan_file_path(res: &Resources) -> (Option<PathBuf>, String) {
     let path = if let Some(configured) = res.get::<PlanFilePath>() {
         configured.0.clone()

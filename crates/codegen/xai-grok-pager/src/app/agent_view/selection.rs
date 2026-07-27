@@ -868,8 +868,10 @@ impl AgentView {
     /// Handle a click on a scrollback entry with multi-click detection.
     ///
     /// - Single click: select entry
-    /// - Double-click non-prompt: toggle fold in place
-    /// - Double-click prompt: toggle fold + scroll to top
+    /// - Double-click foldable non-prompt: toggle fold in place
+    /// - Double-click user prompt: select only (inline edit is Enter — double
+    ///   click used to open edit and squash the padded row from 3→1)
+    /// - Double-click bash/cron foldable prompt: toggle fold + scroll to top
     /// - Triple-click non-prompt: toggle fold + scroll to top
     ///
     /// Returns `(last_click_state, show_word_select_tip)`. The tip flag is set
@@ -998,11 +1000,13 @@ impl AgentView {
                 }
             }
             2 if is_prompt => {
-                // Edit in place; bash/cron keep the old fold behavior.
-                if !self.enter_inline_edit(idx) {
-                    if foldable {
-                        self.scrollback.toggle_fold_selected();
-                    }
+                // Do NOT open inline edit on double-click: that path forced
+                // `inline_edit_height = textarea_rows` and stripped prompt
+                // vpad (3 rows → 1), which looks like the message was
+                // compressed. Inline edit is Enter-only (`panes.rs`).
+                // Bash/cron (not editable) still fold when foldable.
+                if foldable {
+                    self.scrollback.toggle_fold_selected();
                     self.scrollback.scroll_to_entry_top(idx);
                 }
             }

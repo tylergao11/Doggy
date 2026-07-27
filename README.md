@@ -6,13 +6,13 @@
   Doggy
 </h1>
 
-**Doggy** is a terminal-based AI coding agent (fork of Grok Build). It runs as a
+**Doggy** is a terminal-based AI coding agent. It runs as a
 full-screen TUI that understands your codebase, edits files, executes shell
 commands, searches the web, and manages long-running tasks — interactively,
 headlessly for scripting/CI, or embedded in editors via the Agent Client
 Protocol (ACP).
 
-Brand art from the CodeDoggy product (welcome-screen logo + README mark).
+Brand: Doggy (welcome-screen logo + README mark).
 
 [Installing the released binary](#installing-the-released-binary) ·
 [Building from source](#building-from-source) ·

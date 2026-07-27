@@ -11,19 +11,19 @@ pub fn pager_toml_path() -> PathBuf {
     grok_home().join("pager.toml")
 }
 
-/// User-facing label for the user grok directory (``~/.grok`` or ``$GROK_HOME``).
+/// User-facing label for the user grok directory (``~/.Doggy`` or ``$GROK_HOME``).
 ///
 /// Derived from resolved [`grok_home()`] vs `xai_grok_config::default_grok_home()`,
 /// not from whether `GROK_HOME` is set in the environment.
 pub fn display_grok_home_prefix() -> String {
     if grok_home() == xai_grok_config::default_grok_home() {
-        "~/.grok".to_string()
+        "~/.Doggy".to_string()
     } else {
         "$GROK_HOME".to_string()
     }
 }
 
-/// User-facing path under [`grok_home()`], e.g. ``~/.grok/config.toml``.
+/// User-facing path under [`grok_home()`], e.g. ``~/.Doggy/config.toml``.
 pub fn display_user_grok_path(relative: impl AsRef<Path>) -> String {
     let rel = relative.as_ref();
     let prefix = display_grok_home_prefix();
@@ -400,14 +400,14 @@ mod tests {
         if std::env::var("GROK_HOME").is_ok() {
             return;
         }
-        assert_eq!(display_grok_home_prefix(), "~/.grok");
+        assert_eq!(display_grok_home_prefix(), "~/.Doggy");
     }
 
     #[test]
     fn display_user_grok_path_joins_relative() {
         let path = display_user_grok_path("config.toml");
         assert!(path.ends_with("/config.toml") || path.ends_with("\\config.toml"));
-        assert!(path.contains(".grok") || path.contains("$GROK_HOME"));
+        assert!(path.contains(".Doggy") || path.contains("$DOGGY_HOME") || path.contains("$GROK_HOME"));
     }
 
     #[test]
@@ -416,7 +416,7 @@ mod tests {
             if home.is_empty() {
                 return;
             }
-            let full = format!("{home}/.grok/memory/MEMORY.md");
+            let full = format!("{home}/.Doggy/memory/MEMORY.md");
             let abbreviated = abbreviate_path(&full);
             assert!(
                 abbreviated.contains("memory/MEMORY.md"),

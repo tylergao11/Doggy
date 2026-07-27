@@ -351,13 +351,13 @@ pub fn is_undo_input(key: &KeyEvent) -> bool {
 
 impl TextArea {
     /// Compute the number of lines to scroll per mouse wheel tick based on
-    /// the viewport height.  Small viewports scroll slowly (1 line), large
-    /// viewports scroll faster (up to 3 lines).
+    /// the viewport height.  Small viewports scroll slowly (2 lines), large
+    /// viewports scroll faster (up to 6 lines).
     fn scroll_lines_for_height(height: u16) -> u16 {
         match height {
-            0..=5 => 1,
-            6..=15 => 2,
-            _ => 3,
+            0..=5 => 2,
+            6..=15 => 4,
+            _ => 6,
         }
     }
 
@@ -8697,7 +8697,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let mut ta = ta_with(&text);
-        // height=20 → scroll_lines_for_height returns 3 lines/tick
+        // height=20 → scroll_lines_for_height returns 6 lines/tick
         let area = Rect::new(0, 0, 40, 20);
         let mut state = TextAreaState::default();
 
@@ -8708,15 +8708,15 @@ mod tests {
         let mut buf = Buffer::empty(area);
         ratatui::widgets::StatefulWidgetRef::render_ref(&(&ta), area, &mut buf, &mut state);
 
-        // Scroll down 3 ticks (3 lines × 3 = 9 lines).
+        // Scroll down 3 ticks (6 lines × 3 = 18 lines).
         for _ in 0..3 {
             ta.handle_mouse(mouse_scroll_down(0, 0), area, state);
             ratatui::widgets::StatefulWidgetRef::render_ref(&(&ta), area, &mut buf, &mut state);
         }
 
-        // Viewport should now start around line 9.
+        // Viewport should now start around line 18.
         assert!(
-            state.scroll >= 9,
+            state.scroll >= 18,
             "viewport should have scrolled; scroll={}",
             state.scroll
         );

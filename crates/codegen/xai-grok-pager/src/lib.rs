@@ -1,4 +1,4 @@
-//! xai-grok-pager — Grok Build TUI.
+//! xai-grok-pager — Doggy TUI (Grok Build fork).
 //!
 //! A clean-room implementation built on the v3 pager rendering engine.
 

@@ -7,18 +7,19 @@
 //! - `flash` — brief highlight on mouse-up, then clear; double-click toggles fold.
 //! - `hold` — selection stays until dismissed; double-click toggles fold.
 //! - `word_select` — selection stays until dismissed; double-click selects &
-//!   copies a word, triple-click a line (terminal-like). Implies `hold`.
+//!   copies a word, triple-click a line (terminal-like). Implies `hold`. **Default**
+//!   so double-click does not fold/compress blocks.
 
 /// Scrollback text-selection behavior: highlight lifetime + double-click action.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum TextSelection {
-    /// Brief highlight on mouse-up, then clear; double-click toggles fold. Default.
-    #[default]
+    /// Brief highlight on mouse-up, then clear; double-click toggles fold.
     Flash,
     /// Stay visible until Esc/click/scroll; double-click toggles fold.
     Hold,
     /// Stay visible until dismissed; double/triple-click selects & copies a
-    /// word/line (terminal-like). Implies [`TextSelection::holds`].
+    /// word/line (terminal-like). Implies [`TextSelection::holds`]. Default.
+    #[default]
     WordSelect,
 }
 
@@ -73,9 +74,9 @@ mod tests {
     }
 
     #[test]
-    fn default_is_flash() {
-        assert_eq!(TextSelection::default(), TextSelection::Flash);
-        assert_eq!(TextSelection::default().as_canonical(), "flash");
+    fn default_is_word_select() {
+        assert_eq!(TextSelection::default(), TextSelection::WordSelect);
+        assert_eq!(TextSelection::default().as_canonical(), "word_select");
     }
 
     /// The unified invariant: `word_select` always implies `holds()` (persistent

@@ -1130,7 +1130,7 @@ pub(crate) async fn persist_permission_mode_and_notify(
     persist: PermissionModePersist,
     tx: AcpAgentTx,
 ) -> TaskResult {
-    let enabled = canonical == "always-approve";
+    let enabled = canonical == "auto" || canonical == "always-approve";
     let auto_mode = canonical == "auto";
     let config_str: &'static str = canonical;
     let disk_result = xai_grok_shell::util::config::update_config(|cfg| {
@@ -1411,7 +1411,7 @@ pub(super) fn parse_auto_topup_response(
         Err(_) => AutoTopupFetch::Unchanged,
     }
 }
-/// A blocking flock on the shared, possibly-network `~/.grok` lock must never
+/// A blocking flock on the shared, possibly-network `~/.Doggy` lock must never
 /// stall the event-loop thread (and would hang exit on `/quit`); the registry
 /// is best-effort, so skip on contention.
 pub(super) fn unregister_active_session_best_effort(session_id: &acp::SessionId) {

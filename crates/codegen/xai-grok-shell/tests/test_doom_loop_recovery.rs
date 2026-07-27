@@ -538,7 +538,7 @@ async fn headless_config_enables_doom_loop_check_header() {
     let workdir = xai_grok_test_support::git_workdir();
     let home = tempfile::TempDir::new().unwrap();
 
-    let grok_home = home.path().join(".grok");
+    let grok_home = home.path().join(".Doggy");
     std::fs::create_dir_all(&grok_home).expect("create .grok home");
     std::fs::write(
         grok_home.join("config.toml"),

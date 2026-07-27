@@ -255,7 +255,7 @@ pub async fn ensure_latest_on_disk(update_config: &UpdateConfig) -> Result<Ensur
 }
 
 /// Disk-version probe gated on the installer actually maintaining the
-/// managed `~/.grok/bin/grok` symlink.
+/// managed `~/.Doggy/bin/grok` symlink.
 ///
 /// Only the internal (install.sh / CDN) and gh-release installers write that
 /// symlink. npm manages its own global install, so for npm a symlink left
@@ -640,7 +640,7 @@ async fn run_update_subcommand(run_mode: UpdateRunMode) -> Result<Option<tokio::
 ///
 /// `current_exe()` resolves symlinks via `/proc/self/exe` (see proc(5)),
 /// so it returns the old versioned target after a symlink swap.
-/// Prefer `~/.grok/bin/grok` which always points to the latest version.
+/// Prefer `~/.Doggy/bin/grok` which always points to the latest version.
 fn resolve_restart_exe() -> Result<std::path::PathBuf> {
     let canonical = grok_application();
     if canonical.exists() {
@@ -1031,7 +1031,7 @@ pub async fn download_silent(url: &str, dest: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-/// Delete `~/.grok/models_cache.json` after a successful update.
+/// Delete `~/.Doggy/models_cache.json` after a successful update.
 ///
 /// The cache embeds the binary version and will be treated as a miss by the
 /// new binary anyway, but removing it eagerly avoids a wasted disk read +
@@ -1045,7 +1045,7 @@ async fn remove_stale_models_cache() {
     }
 }
 
-/// Remove the stale `grok-pager` symlink/binary from `~/.grok/bin/` left by
+/// Remove the stale `grok-pager` symlink/binary from `~/.Doggy/bin/` left by
 /// older installations that shipped a separate pager binary.
 async fn remove_stale_pager(bin_dir: &std::path::Path) {
     let name = if cfg!(windows) {
@@ -1147,7 +1147,7 @@ async fn smoke_test_binary(binary_path: &std::path::Path) -> bool {
 
 /// Test-only entry point: same as [`install_internal`] but reads from
 /// `gcs_base_url` instead of the hardcoded GCS bucket. Persists installer
-/// config and writes to `~/.grok/bin/`, so callers must isolate
+/// config and writes to `~/.Doggy/bin/`, so callers must isolate
 /// `GROK_HOME`.
 #[doc(hidden)]
 pub async fn install_internal_from_base(
@@ -1159,7 +1159,7 @@ pub async fn install_internal_from_base(
     activate_verified_download(&download).await
 }
 
-/// A downloaded and smoke-tested binary in `~/.grok/downloads/`, not yet
+/// A downloaded and smoke-tested binary in `~/.Doggy/downloads/`, not yet
 /// activated as the managed `grok`/`agent`.
 struct VerifiedDownload {
     version: String,
@@ -1229,7 +1229,7 @@ async fn activate_verified_download(download: &VerifiedDownload) -> Result<()> {
     let bin_dir = grok_home.join("bin");
     tokio::fs::create_dir_all(&bin_dir).await?;
 
-    // Atomic swap of ~/.grok/bin/{grok,agent} -> downloaded binary.
+    // Atomic swap of ~/.Doggy/bin/{grok,agent} -> downloaded binary.
     let link_path = swap_managed_bin_links(&download.binary_path, &bin_dir).await?;
 
     remove_stale_pager(&bin_dir).await;
@@ -1292,13 +1292,13 @@ async fn regenerate_completions(binary: &std::path::Path, grok_home: &std::path:
 
 /// Compute a relative symlink target from `link` to `target`.
 ///
-/// When both paths share a grandparent (e.g. `~/.grok/bin/grok` and
-/// `~/.grok/downloads/grok-0.1.203-linux-x86_64`), returns a relative path
+/// When both paths share a grandparent (e.g. `~/.Doggy/bin/grok` and
+/// `~/.Doggy/downloads/grok-0.1.203-linux-x86_64`), returns a relative path
 /// like `../downloads/grok-0.1.203-linux-x86_64`.  When they share the same
 /// parent directory, returns just the filename.  Falls back to the absolute
 /// `target` path for any other layout.
 ///
-/// Relative symlinks survive Docker bind-mounts where `~/.grok/` is mapped
+/// Relative symlinks survive Docker bind-mounts where `~/.Doggy/` is mapped
 /// into a container with a different `$HOME` (and thus a different absolute
 /// prefix).
 #[cfg(unix)]
@@ -1322,7 +1322,7 @@ fn relative_symlink_target(target: &std::path::Path, link: &std::path::Path) -> 
     target.to_path_buf()
 }
 
-/// Swap `~/.grok/bin/{grok,agent}` to point at `binary_path`. Returns the
+/// Swap `~/.Doggy/bin/{grok,agent}` to point at `binary_path`. Returns the
 /// `grok` link path (for [`regenerate_completions`]).
 ///
 /// `grok` and `agent` are first-class entry points that the bootstrap
@@ -1331,7 +1331,7 @@ fn relative_symlink_target(target: &std::path::Path, link: &std::path::Path) -> 
 /// leaves `agent` pinned at the previous version.
 ///
 /// Unix: atomic symlink swap with relative target (survives Docker
-/// bind-mounts of `~/.grok/`). Windows: [`windows_replace_exe`].
+/// bind-mounts of `~/.Doggy/`). Windows: [`windows_replace_exe`].
 ///
 /// **All-or-nothing.** Each link's prior state is captured (Unix: prior
 /// symlink target; Windows: `.rollback.bak`; or `Absent` marker via
@@ -2039,11 +2039,11 @@ async fn install_gh_release(target: Option<&str>) -> Result<()> {
         tokio::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755)).await?;
     }
 
-    // Atomic swap of ~/.grok/bin/{grok,agent} -> downloaded binary.
+    // Atomic swap of ~/.Doggy/bin/{grok,agent} -> downloaded binary.
     swap_managed_bin_links(&binary_path, &bin_dir).await?;
 
     // Update grok-latest -> versioned binary so any existing symlinks that route
-    // through it (e.g. /usr/local/bin/grok -> ~/.grok/downloads/grok-latest)
+    // through it (e.g. /usr/local/bin/grok -> ~/.Doggy/downloads/grok-latest)
     // resolve to the newly installed version.
     #[cfg(unix)]
     {
@@ -2055,7 +2055,7 @@ async fn install_gh_release(target: Option<&str>) -> Result<()> {
     }
 
     // Also update /usr/local/bin/{grok,agent} if either points directly into
-    // ~/.grok/downloads/ (legacy layout — skips the grok-latest indirection).
+    // ~/.Doggy/downloads/ (legacy layout — skips the grok-latest indirection).
     // Permission errors ignored.
     #[cfg(unix)]
     for name in ["grok", "agent"] {
@@ -2123,7 +2123,7 @@ fn create_temp_npmrc(npm_registry: Option<&str>) -> Result<Option<std::path::Pat
 /// the code signature of the mmap'd executable pages once the backing file
 /// inode is unlinked.
 ///
-/// While our postinstall.js now uses versioned binaries under ~/.grok/bin/
+/// While our postinstall.js now uses versioned binaries under ~/.Doggy/bin/
 /// (so processes launched from there are safe), older installations or npx
 /// invocations may still be running the vendored binary directly.
 #[cfg(target_os = "macos")]
@@ -2465,8 +2465,8 @@ mod tests {
         // name onto a single `grok-0.1.tmp`; the helper must keep distinct
         // versions distinct AND make repeated attempts (same process, e.g.
         // concurrent tokio tasks) unique.
-        let dest_181 = std::path::Path::new("/home/u/.grok/downloads/grok-0.1.181-linux-x86_64");
-        let dest_182 = std::path::Path::new("/home/u/.grok/downloads/grok-0.1.182-linux-x86_64");
+        let dest_181 = std::path::Path::new("/home/u/.Doggy/downloads/grok-0.1.181-linux-x86_64");
+        let dest_182 = std::path::Path::new("/home/u/.Doggy/downloads/grok-0.1.182-linux-x86_64");
 
         let a = tmp_download_path(dest_181);
         let b = tmp_download_path(dest_182);
@@ -2489,7 +2489,7 @@ mod tests {
         );
         assert_eq!(
             a.parent(),
-            std::path::Path::new("/home/u/.grok/downloads").into(),
+            std::path::Path::new("/home/u/.Doggy/downloads").into(),
             "temp file must stay in the destination directory for atomic rename"
         );
     }
@@ -2912,8 +2912,8 @@ mod tests {
     #[test]
     fn test_relative_symlink_target_sibling_dirs() {
         // bin/grok -> ../downloads/grok-0.1.203
-        let target = std::path::Path::new("/home/alice/.grok/downloads/grok-0.1.203");
-        let link = std::path::Path::new("/home/alice/.grok/bin/grok");
+        let target = std::path::Path::new("/home/alice/.Doggy/downloads/grok-0.1.203");
+        let link = std::path::Path::new("/home/alice/.Doggy/bin/grok");
         let result = relative_symlink_target(target, link);
         assert_eq!(
             result,
@@ -2925,8 +2925,8 @@ mod tests {
     #[test]
     fn test_relative_symlink_target_same_dir() {
         // downloads/grok-latest -> grok-0.1.203 (same directory)
-        let target = std::path::Path::new("/home/alice/.grok/downloads/grok-0.1.203");
-        let link = std::path::Path::new("/home/alice/.grok/downloads/grok-latest");
+        let target = std::path::Path::new("/home/alice/.Doggy/downloads/grok-0.1.203");
+        let link = std::path::Path::new("/home/alice/.Doggy/downloads/grok-latest");
         let result = relative_symlink_target(target, link);
         assert_eq!(result, std::path::PathBuf::from("grok-0.1.203"));
     }
@@ -2934,26 +2934,26 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_relative_symlink_target_cross_tree_stays_absolute() {
-        // /usr/local/bin/grok -> /home/alice/.grok/downloads/grok-0.1.203
+        // /usr/local/bin/grok -> /home/alice/.Doggy/downloads/grok-0.1.203
         // Different grandparents — should stay absolute.
-        let target = std::path::Path::new("/home/alice/.grok/downloads/grok-0.1.203");
+        let target = std::path::Path::new("/home/alice/.Doggy/downloads/grok-0.1.203");
         let link = std::path::Path::new("/usr/local/bin/grok");
         let result = relative_symlink_target(target, link);
         assert_eq!(
             result,
-            std::path::PathBuf::from("/home/alice/.grok/downloads/grok-0.1.203")
+            std::path::PathBuf::from("/home/alice/.Doggy/downloads/grok-0.1.203")
         );
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn test_relative_symlink_survives_directory_move() {
-        // Simulates Docker bind-mount: create ~/.grok/ layout at path A,
+        // Simulates Docker bind-mount: create ~/.Doggy/ layout at path A,
         // then move it to path B and verify the symlink still resolves.
         let dir = tempfile::tempdir().unwrap();
 
         // Create alice's layout
-        let alice = dir.path().join("alice").join(".grok");
+        let alice = dir.path().join("alice").join(".Doggy");
         let alice_downloads = alice.join("downloads");
         let alice_bin = alice.join("bin");
         std::fs::create_dir_all(&alice_downloads).unwrap();
@@ -2971,7 +2971,7 @@ mod tests {
         // "Bind-mount" to bob: copy the entire .grok tree
         let bob_home = dir.path().join("bob");
         std::fs::create_dir_all(&bob_home).unwrap();
-        let bob = bob_home.join(".grok");
+        let bob = bob_home.join(".Doggy");
         let copy_status = std::process::Command::new("cp")
             .args(["-a", alice.to_str().unwrap(), bob.to_str().unwrap()])
             .status()

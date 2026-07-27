@@ -201,7 +201,7 @@ impl WorktreeDb {
         })
     }
 
-    /// Open the default DB at `~/.grok/worktrees.db`.
+    /// Open the default DB at `~/.Doggy/worktrees.db`.
     ///
     /// Discovers grok home via `$GROK_HOME`, falling back to the canonicalized
     /// `$HOME/.grok` (matching `xai_grok_config::grok_home`).
@@ -338,15 +338,25 @@ pub fn now_epoch_secs() -> i64 {
 }
 
 pub fn resolve_grok_home() -> Result<PathBuf> {
-    if let Ok(v) = std::env::var("GROK_HOME") {
+    if let Ok(v) = std::env::var("DOGGY_HOME") {
         return Ok(PathBuf::from(v));
     }
-    let home = PathBuf::from(std::env::var("HOME").context("neither $GROK_HOME nor $HOME is set")?);
-    // Canonicalize the home dir so worktree paths share the same physical .grok
-    // tree as trust/hooks even when it is symlinked. The dunce canonicalization
-    // must stay in sync with xai_grok_config::default_grok_home();
-    // home resolution deliberately differs ($HOME here vs std::env::home_dir()).
-    Ok(dunce::canonicalize(&home).unwrap_or(home).join(".grok"))
+    if let Ok(v) = std::env::var("GROK_HOME") {
+        // Legacy env alias — prefer DOGGY_HOME.
+        return Ok(PathBuf::from(v));
+    }
+    let home = PathBuf::from(
+        std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .context("neither $DOGGY_HOME, $GROK_HOME, nor $HOME/$USERPROFILE is set")?,
+    );
+    // Canonicalize so worktree paths share the same physical .Doggy tree as
+    // trust/hooks even when it is symlinked. The dunce canonicalization must
+    // stay in sync with xai_grok_config::default_grok_home(); home resolution
+    // deliberately differs ($HOME/$USERPROFILE here vs std::env::home_dir()).
+    Ok(dunce::canonicalize(&home)
+        .unwrap_or(home)
+        .join(".Doggy"))
 }
 
 /// Serializes tests that mutate the process-global `GROK_HOME` env var so they

@@ -1575,10 +1575,10 @@ mod link_click_tests {
             "expected fall-through to OpenBlockViewer, got {outcome:?}"
         );
     }
-    /// Double-click on a user prompt enters inline edit mode (replacing the
-    /// old fold-toggle for editable prompts).
+    /// Double-click on a user prompt must NOT open inline edit — that path
+    /// used to squash the padded prompt (3 rows → 1). Edit is Enter-only.
     #[test]
-    fn double_click_on_user_prompt_enters_inline_edit() {
+    fn double_click_on_user_prompt_does_not_enter_inline_edit() {
         let mut agent = make_agent();
         agent
             .scrollback
@@ -1593,8 +1593,13 @@ mod link_click_tests {
         (agent.last_click, _) = agent.handle_scrollback_click(now, 0, false);
         let _ = agent.handle_scrollback_click(now + std::time::Duration::from_millis(10), 0, false);
         assert!(
-            agent.inline_edit.is_some(),
-            "double-click must start inline edit"
+            agent.inline_edit.is_none(),
+            "double-click must not start inline edit"
+        );
+        assert_eq!(
+            agent.scrollback.selected(),
+            Some(0),
+            "double-click still selects the prompt"
         );
     }
     #[test]

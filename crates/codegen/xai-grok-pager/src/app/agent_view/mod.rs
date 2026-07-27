@@ -494,7 +494,8 @@ pub(super) fn app_should_open_link_on_click_with(
 /// Unified into the `keep_text_selection` setting (the `word_select` mode):
 /// reads the live appearance cache, so a Settings-panel change applies without
 /// a restart and can never drift from the highlight-persistence behavior. The
-/// default (`flash`) is fold-toggle, preserving backwards compatibility.
+/// default is `word_select` so double-click selects text instead of folding
+/// (or opening inline edit, which used to squash padded prompts).
 pub(super) fn is_text_selection_on_double_click() -> bool {
     crate::appearance::cache::load_keep_text_selection().selects_word()
 }

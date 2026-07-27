@@ -361,7 +361,7 @@ async fn reload_project_servers_after_grant(ctx: ReloadAfterGrant<'_>) {
         let _ = target
             .cmd_tx
             .send(crate::session::SessionCommand::ReloadPlugins { registry });
-        // The session's OWN project hooks (`.grok/hooks`, `.cursor/hooks.json`),
+        // The session's OWN project hooks (`.Doggy/hooks`, `.cursor/hooks.json`),
         // which `ReloadPlugins` does NOT touch — re-discovered against the actor's
         // own `session_info.cwd` on the now-trusted verdict by `reload_hooks_impl`.
         let _ = target

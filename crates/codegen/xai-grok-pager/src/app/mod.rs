@@ -1336,11 +1336,15 @@ pub(crate) fn set_terminal_title(title: &str) {
 /// sequences into the terminal.
 fn terminal_title_string(title: &str) -> String {
     let sanitized: String = title.chars().filter(|c| !c.is_control()).collect();
+    // Product tab title — Doggy, not the upstream Grok CLI / process name.
+    const PRODUCT_TITLE: &str = "Doggy";
     if sanitized.is_empty() {
-        "grok".into()
+        PRODUCT_TITLE.into()
     } else {
-        let truncated: String = sanitized.chars().take(80 - 6).collect();
-        format!("{} - grok", truncated)
+        let suffix = format!(" - {PRODUCT_TITLE}");
+        let budget = 80usize.saturating_sub(suffix.chars().count());
+        let truncated: String = sanitized.chars().take(budget).collect();
+        format!("{truncated}{suffix}")
     }
 }
 fn set_panic_hook(mode: ScreenMode) {
@@ -1383,11 +1387,11 @@ mod tests {
     fn terminal_title_strips_control_characters() {
         assert_eq!(
             terminal_title_string("evil\x07\x1b]52;c;payload\x07title"),
-            "evil]52;c;payloadtitle - grok"
+            "evil]52;c;payloadtitle - Doggy"
         );
-        assert_eq!(terminal_title_string("\x07\x1b\x00"), "grok");
-        assert_eq!(terminal_title_string(""), "grok");
-        assert_eq!(terminal_title_string("My chat"), "My chat - grok");
+        assert_eq!(terminal_title_string("\x07\x1b\x00"), "Doggy");
+        assert_eq!(terminal_title_string(""), "Doggy");
+        assert_eq!(terminal_title_string("My chat"), "My chat - Doggy");
     }
     #[test]
     fn hunk_tracker_mode_nothing_set_is_none() {
@@ -1757,7 +1761,7 @@ mod tests {
     #[test]
     fn cli_command_name_is_grok() {
         use clap::CommandFactory;
-        assert_eq!(PagerArgs::command().get_name(), "grok");
+        assert_eq!(PagerArgs::command().get_name(), "doggy");
     }
     #[test]
     fn cli_help_output_header() {
@@ -1767,9 +1771,9 @@ mod tests {
         assert_eq!(
             first_5,
             vec![
-                "Grok Build TUI",
+                "Doggy TUI",
                 "",
-                "Usage: grok [OPTIONS] [PROMPT] [COMMAND]",
+                "Usage: doggy [OPTIONS] [PROMPT] [COMMAND]",
                 "",
                 "Arguments:",
             ]

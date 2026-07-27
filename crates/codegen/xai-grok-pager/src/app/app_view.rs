@@ -585,7 +585,7 @@ pub struct AppView {
     pub scroll_state: MouseScrollState,
     /// Scroll config derived from terminal detection.
     pub scroll_config: ScrollConfig,
-    /// Current appearance config (hot-reloadable from ~/.grok/pager.toml).
+    /// Current appearance config (hot-reloadable from ~/.Doggy/pager.toml).
     /// Stored here so new agents inherit the current config.
     pub appearance: AppearanceConfig,
     /// Notification service (terminal bell, OSC sequences, title updates).
@@ -1054,7 +1054,7 @@ pub struct AppView {
     pub dashboard: Option<crate::views::dashboard::DashboardState>,
     /// Persisted dashboard configuration (pinned rows, reorderings,
     /// grouping). Loaded once on startup from
-    /// `~/.grok/config.toml`. `None` when the file/section is absent
+    /// `~/.Doggy/config.toml`. `None` when the file/section is absent
     /// or contained malformed data — falls back to in-memory defaults.
     pub dashboard_persisted: Option<crate::views::dashboard::PersistedDashboard>,
     /// Per-platform key event normalizer.
@@ -1264,7 +1264,7 @@ impl AppView {
             welcome_shimmer_frame: 0,
             cli_model_override: None,
             cli_effort_token: None,
-            default_yolo: false,
+            default_yolo: true,
             permission_mode_from_soft_default: true,
             auto_mode_gate: xai_grok_shell::util::config::auto_permission_mode_enabled_from_disk(),
             yolo_policy_block: None,
@@ -3836,7 +3836,7 @@ impl AppView {
                             Vec::new();
                         if self.default_yolo {
                             flags_vec.push(crate::views::prompt_widget::PromptFlag {
-                                text: "always-approve",
+                                text: "auto",
                                 color: None,
                                 bold: false,
                             });
@@ -5170,7 +5170,7 @@ pub(crate) mod tests {
             tip: None,
             cli_model_override: None,
             cli_effort_token: None,
-            default_yolo: false,
+            default_yolo: true,
             permission_mode_from_soft_default: true,
             auto_mode_gate: true,
             yolo_policy_block: None,
@@ -6605,7 +6605,7 @@ pub(crate) mod tests {
     fn apply_auth_meta_clears_gate_on_subscription() {
         let mut app = test_app();
         app.gate = Some(xai_grok_shell::auth::GateInfo {
-            message: "Subscribe to use Grok Build".into(),
+            message: "Subscribe to use Doggy".into(),
             url: Some("https://grok.com/supergrok?referrer=grok-build".into()),
             label: None,
         });

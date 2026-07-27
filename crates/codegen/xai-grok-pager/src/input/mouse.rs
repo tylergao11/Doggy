@@ -5,7 +5,7 @@
 //! events as short streams separated by gaps, converting events into line deltas with a
 //! per-terminal events-per-tick factor, and coalescing redraw to a fixed cadence.
 //!
-//! A mouse wheel "tick" (one notch) is expected to scroll by a fixed number of lines (default: 3)
+//! A mouse wheel "tick" (one notch) is expected to scroll by a fixed number of lines (default: 6)
 //! regardless of the terminal's raw event density. Trackpad scrolling should remain higher
 //! fidelity (small movements can result in sub-line accumulation that only scrolls once whole
 //! lines are reached).
@@ -67,8 +67,11 @@ const REDRAW_CADENCE_MS: u64 = 16;
 const REDRAW_CADENCE: Duration = Duration::from_millis(REDRAW_CADENCE_MS);
 
 const DEFAULT_EVENTS_PER_TICK: u16 = 3;
-const DEFAULT_WHEEL_LINES_PER_TICK: u16 = 3;
-const DEFAULT_TRACKPAD_LINES_PER_TICK: u16 = 3; // NOTE: was 1
+/// Lines moved per physical wheel notch (and trackpad tick-equivalent).
+/// Raised from 3 → 6 so scrollback is less tiring on large transcripts;
+/// users can still dial via Settings → `scroll_lines` / `scroll_speed`.
+const DEFAULT_WHEEL_LINES_PER_TICK: u16 = 6;
+const DEFAULT_TRACKPAD_LINES_PER_TICK: u16 = 6;
 const DEFAULT_SCROLL_MODE: ScrollInputMode = ScrollInputMode::Auto;
 const DEFAULT_WHEEL_TICK_DETECT_MAX_MS: u64 = 12;
 const DEFAULT_WHEEL_LIKE_MAX_DURATION_MS: u64 = 200;
@@ -473,15 +476,13 @@ impl ScrollConfig {
     /// lines/s on any screen size; some cap must remain or a single flush
     /// teleports the view.
     ///
-    /// Legitimate wheel input cannot reach the cap: wheel/Unknown streams
+    /// Legitimate wheel input rarely hits the cap: wheel/Unknown streams
     /// have no acceleration (desired is `accumulated_events x
-    /// lines_per_tick/events_per_tick x speed`), every profile prices a
-    /// notch at <= 3 lines at the default speed, and physical notch cadence
-    /// tops out around 2 notches per 16ms slot even free-spinning — <= 6
-    /// lines per flush, i.e. at most the floor and well under viewport/2 on
-    /// real panes. Only misclassified floods (or extreme speed settings,
-    /// which the cap then paces across 16ms slots instead of teleporting)
-    /// can exceed it.
+    /// lines_per_tick/events_per_tick x speed`). At the default speed a
+    /// notch is ~6 lines; free-spinning ~2 notches per 16ms slot is ~12
+    /// lines — the floor is 6 and real panes use viewport/2. Only
+    /// misclassified floods (or extreme speed settings, which the cap
+    /// then paces across 16ms slots instead of teleporting) exceed it.
     fn flush_cap(self) -> i32 {
         (self.viewport_height as i32 / 2).max(MIN_DELTA_PER_FLUSH)
     }

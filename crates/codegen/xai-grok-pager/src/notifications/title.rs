@@ -5,6 +5,10 @@ use crossterm::terminal::SetTitle;
 use super::config::{TitleConfig, TitleItem};
 use crate::acp::tracker::TurnActivity;
 
+/// User-visible product name in the terminal tab / window title.
+/// Keep this the single source of truth — do not scatter "grok"/"doggy" literals.
+const PRODUCT_TITLE: &str = "Doggy";
+
 const TITLE_SPINNER: &[char] = &[
     '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}', '\u{2827}',
 ];
@@ -89,7 +93,7 @@ impl TitleManager {
 
         if !has_parts {
             self.composed.clear();
-            self.composed.push_str("grok");
+            self.composed.push_str(PRODUCT_TITLE);
         }
 
         let result = if self.composed != self.last_title {
@@ -113,9 +117,9 @@ impl TitleManager {
     }
 
     pub fn reset(&mut self) -> String {
-        let esc = build_title_escape("grok");
+        let esc = build_title_escape(PRODUCT_TITLE);
         self.last_title.clear();
-        self.last_title.push_str("grok");
+        self.last_title.push_str(PRODUCT_TITLE);
         self.spinner_frame = 0;
         self.tick_count = 0;
         esc
@@ -134,7 +138,7 @@ fn write_item(
     match item {
         TitleItem::Grok => {
             push_separator(buf, has_parts);
-            buf.push_str("grok");
+            buf.push_str(PRODUCT_TITLE);
         }
         TitleItem::Spinner => {
             if !state.is_busy && state.activity.is_none() {
@@ -312,7 +316,7 @@ mod tests {
         let mut mgr = TitleManager::new(&cfg);
         let state = idle_state();
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
     }
 
     #[test]
@@ -324,7 +328,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "my project - grok");
+        assert_eq!(mgr.last_title, "my project - Doggy");
     }
 
     #[test]
@@ -333,7 +337,7 @@ mod tests {
         let mut mgr = TitleManager::new(&cfg);
         let state = idle_state();
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
     }
 
     #[test]
@@ -345,7 +349,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
     }
 
     #[test]
@@ -355,7 +359,7 @@ mod tests {
 
         // Idle: spinner absent
         mgr.update(&idle_state());
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
 
         // Active: spinner present
         let activity = TurnActivity::Thinking;
@@ -364,7 +368,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert!(mgr.last_title.contains(" - grok"));
+        assert!(mgr.last_title.contains(" - Doggy"));
         let spinner_part: String = mgr.last_title.chars().take(1).collect();
         assert!(
             TITLE_SPINNER.contains(&spinner_part.chars().next().unwrap()),
@@ -525,7 +529,7 @@ mod tests {
         let cfg = config_with_items(vec![TitleItem::Activity, TitleItem::Grok]);
         let mut mgr = TitleManager::new(&cfg);
         mgr.update(&idle_state());
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
     }
 
     #[test]
@@ -537,7 +541,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert!(mgr.last_title.contains(" - grok"));
+        assert!(mgr.last_title.contains(" - Doggy"));
         let spinner_part: String = mgr.last_title.chars().take(1).collect();
         assert!(
             TITLE_SPINNER.contains(&spinner_part.chars().next().unwrap()),
@@ -555,7 +559,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "Waiting - grok");
+        assert_eq!(mgr.last_title, "Waiting - Doggy");
     }
 
     #[test]
@@ -569,7 +573,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "Thinking - grok");
+        assert_eq!(mgr.last_title, "Thinking - Doggy");
     }
 
     // --- Action Required blinking ---
@@ -633,9 +637,9 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
     }
 
     // --- Dedup (no-op when unchanged) ---
@@ -647,7 +651,7 @@ mod tests {
         let state = idle_state();
 
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
 
         // Second update: title is identical, last_title stays the same (no re-emit).
         let title_before = mgr.last_title.clone();
@@ -662,7 +666,7 @@ mod tests {
         let cfg = config_with_items(vec![]);
         let mut mgr = TitleManager::new(&cfg);
         mgr.update(&idle_state());
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
     }
 
     // --- Model item ---
@@ -676,7 +680,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok-3 - grok");
+        assert_eq!(mgr.last_title, "grok-3 - Doggy");
     }
 
     #[test]
@@ -684,7 +688,7 @@ mod tests {
         let cfg = config_with_items(vec![TitleItem::Model, TitleItem::Grok]);
         let mut mgr = TitleManager::new(&cfg);
         mgr.update(&idle_state());
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
     }
 
     // --- Cwd item ---
@@ -698,7 +702,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "my-project - grok");
+        assert_eq!(mgr.last_title, "my-project - Doggy");
     }
 
     // --- TurnTimer item ---
@@ -712,7 +716,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "42s - grok");
+        assert_eq!(mgr.last_title, "42s - Doggy");
     }
 
     #[test]
@@ -724,7 +728,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
     }
 
     // --- Truncation ---
@@ -769,10 +773,10 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_ne!(mgr.last_title, "grok");
+        assert_ne!(mgr.last_title, "Doggy");
 
         mgr.reset();
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
         assert_eq!(mgr.spinner_frame, 0);
         assert_eq!(mgr.tick_count, 0);
     }
@@ -805,7 +809,7 @@ mod tests {
 
         // Both should contain the persistent parts.
         for t in [&t1, &t2] {
-            assert!(t.contains("grok"), "title missing 'grok': {t}");
+            assert!(t.contains("Doggy"), "title missing product 'Doggy': {t}");
             assert!(t.contains("Responding"), "title missing 'Responding': {t}");
             assert!(t.contains("my-session"), "title missing session name: {t}");
         }
@@ -820,7 +824,7 @@ mod tests {
         let cfg = default_config();
         let mut mgr = TitleManager::new(&cfg);
         mgr.update(&idle_state());
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, "Doggy");
     }
 
     // --- Multi-item combinations ---
@@ -846,7 +850,7 @@ mod tests {
         mgr.update(&state);
         assert_eq!(
             mgr.last_title,
-            "Thinking - proj - grok-3 - workspace - grok"
+            "Thinking - proj - grok-3 - workspace - Doggy"
         );
     }
 

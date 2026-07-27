@@ -68,7 +68,7 @@ impl ContentController {
         self.server.url()
     }
 
-    /// Isolated `$HOME` directory that the pager should use (keeps its ~/.grok
+    /// Isolated `$HOME` directory that the pager should use (keeps its ~/.Doggy
     /// cache/state out of the real home during tests).
     pub fn home(&self) -> &Path {
         self.home.path()
@@ -83,7 +83,7 @@ impl ContentController {
         let grok_home = self
             .home
             .path()
-            .join(".grok")
+            .join(".Doggy")
             .to_string_lossy()
             .into_owned();
         vec![
@@ -285,7 +285,7 @@ mod tests {
         assert_eq!(get("HOME").as_deref(), content.home().to_str());
         assert_eq!(
             get("GROK_HOME").as_deref(),
-            content.home().join(".grok").to_str()
+            content.home().join(".Doggy").to_str()
         );
         assert_eq!(get("GROK_CLI_CHAT_PROXY_BASE_URL"), Some(content.url()));
         assert_eq!(get("GROK_XAI_API_BASE_URL"), Some(content.url()));

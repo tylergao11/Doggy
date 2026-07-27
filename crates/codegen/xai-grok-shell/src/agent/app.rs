@@ -1581,7 +1581,7 @@ pub async fn run_leader(
                             }
                         }
                         ConfigUpdate::ModelsCacheChanged => {
-                            // External write to ~/.grok/models_cache.json
+                            // External write to ~/.Doggy/models_cache.json
                             // (another grok process fetched a fresher /v1/models
                             // catalog). Injected into the agent's ACP stream —
                             // NOT applied directly on the manager — so it is

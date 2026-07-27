@@ -55,7 +55,7 @@ pub enum Command {
     /// Fetch and install managed configuration
     Setup {
         /// Print the fetched configuration as JSON instead of installing it;
-        /// writes nothing to ~/.grok.
+        /// writes nothing to ~/.Doggy.
         #[arg(long)]
         json: bool,
     },
@@ -79,7 +79,7 @@ Examples:
   grok wrap docker exec -it my-container bash
   grok wrap kubectl exec -it my-pod -- bash
 
-See ~/.grok/README.md for more information.
+See ~/.Doggy/README.md for more information.
 ")]
     Wrap(WrapArgs),
     /// Export a session transcript as Markdown
@@ -135,7 +135,7 @@ See ~/.grok/README.md for more information.
     ///
     /// Centralised, agent-native overview of every session (top-level and
     /// subagents). Disabled when `[dashboard].enabled = false` in
-    /// `~/.grok/config.toml` or when the `GROK_AGENT_DASHBOARD=0` env
+    /// `~/.Doggy/config.toml` or when the `GROK_AGENT_DASHBOARD=0` env
     /// var is set.
     Dashboard,
 }
@@ -269,7 +269,7 @@ pub struct AgentArgs {
     )]
     pub reasoning_effort: Option<String>,
     /// Auto-approve all tool executions
-    #[arg(long = "always-approve", alias = "yolo")]
+    #[arg(long = "auto", alias = "always-approve", alias = "yolo")]
     pub yolo: bool,
     /// Path to an agent profile file.
     #[arg(long = "agent-profile", value_name = "PATH")]
@@ -408,9 +408,9 @@ fn version_with_channel() -> &'static str {
 }
 #[derive(Debug, Clone, Parser)]
 #[command(
-    name = "grok",
+    name = "doggy",
     version = version_with_channel(),
-    about = "Grok Build TUI",
+    about = "Doggy TUI",
     disable_version_flag = true,
     next_display_order = None,
     help_template = "\
@@ -434,7 +434,7 @@ pub struct PagerArgs {
     /// Working directory.
     #[arg(long)]
     pub cwd: Option<PathBuf>,
-    /// Use a custom leader socket path instead of the default `~/.grok/leader.sock`.
+    /// Use a custom leader socket path instead of the default `~/.Doggy/leader.sock`.
     #[arg(
         long = "leader-socket",
         value_name = "PATH",
@@ -455,7 +455,7 @@ pub struct PagerArgs {
     pub debug_file: Option<PathBuf>,
     /// Auto-approve all tool executions.
     #[clap(
-        long = "always-approve",
+        long = "auto", alias = "always-approve",
         alias = "yolo",
         alias = "dangerously-skip-permissions"
     )]
@@ -712,7 +712,7 @@ pub struct PagerArgs {
     /// into the terminal's native scrollback (use the terminal's own scroll /
     /// selection); a small pinned region holds the prompt + running turn.
     /// Session-scoped only — does not write config. To default plain `grok` to
-    /// minimal, set `[ui] screen_mode = "minimal"` in ~/.grok/config.toml.
+    /// minimal, set `[ui] screen_mode = "minimal"` in ~/.Doggy/config.toml.
     #[arg(long = "minimal")]
     pub minimal: bool,
     /// Open in the standard fullscreen TUI for this session, overriding a
@@ -721,7 +721,7 @@ pub struct PagerArgs {
     /// policy (--no-alt-screen, [terminal] alt_screen, terminal auto-detection).
     #[arg(long = "fullscreen", conflicts_with = "minimal")]
     pub fullscreen: bool,
-    /// Write sampling events to ~/.grok/logs/sampling.jsonl.
+    /// Write sampling events to ~/.Doggy/logs/sampling.jsonl.
     #[arg(long = "log-sampling", env = "GROK_LOG_SAMPLING", hide = true)]
     pub log_sampling: bool,
     /// Show the login screen even when credentials are already available.
@@ -778,8 +778,10 @@ impl PagerArgs {
             .map(std::path::Path::new)
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
-            .filter(|n| *n == "grok" || *n == "agent")
-            .unwrap_or("grok")
+            // Accept doggy (product), grok (legacy install name), agent (ACP).
+            .map(|n| n.strip_suffix(".exe").unwrap_or(n))
+            .filter(|n| *n == "doggy" || *n == "grok" || *n == "agent")
+            .unwrap_or("doggy")
             .to_owned();
         let mut args = Self::parse_from(std::iter::once(bin_name).chain(std::env::args().skip(1)));
         if let Some(socket) = args.leader_socket.take() {

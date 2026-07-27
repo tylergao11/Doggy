@@ -962,7 +962,7 @@ pub enum Action {
 }
 /// Persist-and-notify semantics for [`Effect::PersistPermissionMode`].
 ///
-/// Both variants write to `~/.grok/config.toml` and route ACP
+/// Both variants write to `~/.Doggy/config.toml` and route ACP
 /// `x.ai/yolo_mode_changed` notifications. The ACP notification is
 /// gated on disk-write success when `WithRollback` is used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -980,56 +980,40 @@ pub enum PermissionModePersist {
 }
 /// Canonical permission-mode state for the `permission_mode` setting.
 ///
-/// `Default` and `Ask` both project onto `yolo_mode = false` at runtime
-/// but are distinct on disk — `Default` expresses "use the agent's
-/// default" while `Ask` is the explicit "prompt me every time".
-/// `Auto` uses the LLM classifier (not full always-approve).
+/// Doggy product surface is two session forms only:
+/// - **Plan** (separate `plan_mode` / Shift+Tab) — plan-file gate
+/// - **Auto** — tools auto-run (`yolo_mode = true`); no per-tool prompts
+///
+/// Legacy wire values (`ask`, `default`, `always-approve`, old classifier
+/// `auto`) all normalize to [`Self::Auto`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionModeKind {
-    /// Agent's default behavior (prompt). `yolo_mode = false`.
-    Default,
-    /// Explicit prompt-every-time. `yolo_mode = false`.
-    Ask,
-    /// LLM classifier for non-fast-path tools. `yolo_mode = false`, `auto_mode = true`.
+    /// Tools auto-run; no permission prompts. The only non-plan product mode.
     Auto,
-    /// Auto-approve all tool actions. `yolo_mode = true`.
+    /// Deprecated alias of [`Self::Auto`] (old always-approve name).
     AlwaysApprove,
+    /// Deprecated; maps to Auto at runtime.
+    Ask,
+    /// Deprecated; maps to Auto at runtime.
+    Default,
 }
 impl PermissionModeKind {
-    /// Canonical persisted/wire string for the kind. Matches the
-    /// `EnumChoice.canonical` values in
-    /// `settings/defs.rs::PERMISSION_MODE_CHOICES`.
+    /// Canonical persisted string. Doggy only writes `"auto"`.
     pub fn as_canonical(self) -> &'static str {
-        match self {
-            Self::Default => "default",
-            Self::Ask => "ask",
-            Self::Auto => "auto",
-            Self::AlwaysApprove => "always-approve",
-        }
+        "auto"
     }
-    /// Bool projection onto the YOLO runtime flag — `AlwaysApprove
-    /// → true`, everything else → `false`. Used by `set_yolo_mode_inner`
-    /// to perform the actual state mutation (`agent.session.yolo_mode`,
-    /// `app.default_yolo`, permission_queue drain) without caring
-    /// about the canonical distinction. The canonical is restored
-    /// afterwards by `set_permission_mode`.
+    /// Full auto-approve (yolo). Every product kind is true.
     pub fn is_always_approve(self) -> bool {
-        matches!(self, Self::AlwaysApprove)
+        true
     }
-    /// LLM classifier mode (distinct from always-approve).
+    /// Old classifier flag — always false (classifier tier removed).
     pub fn is_auto(self) -> bool {
-        matches!(self, Self::Auto)
+        false
     }
-    /// Construct from a canonical string. Returns `None` for unknown
-    /// strings. Used by `apply_setting_rollback("permission_mode", _)`
-    /// to recover the typed kind from the `SettingValue::Enum(canonical)`
-    /// rollback payload.
+    /// Construct from a canonical string. Legacy names normalize to Auto.
     pub fn from_canonical(s: &str) -> Option<Self> {
         match s {
-            "default" => Some(Self::Default),
-            "ask" => Some(Self::Ask),
-            "auto" => Some(Self::Auto),
-            "always-approve" => Some(Self::AlwaysApprove),
+            "auto" | "always-approve" | "ask" | "default" => Some(Self::Auto),
             _ => None,
         }
     }
@@ -1038,28 +1022,17 @@ impl PermissionModeKind {
 mod permission_mode_kind_tests {
     use super::PermissionModeKind;
     #[test]
-    fn auto_is_distinct_from_always_approve() {
-        let auto = PermissionModeKind::Auto;
-        assert_eq!(auto.as_canonical(), "auto");
-        assert!(!auto.is_always_approve());
-        assert!(auto.is_auto());
-        assert_eq!(
-            PermissionModeKind::from_canonical("auto"),
-            Some(PermissionModeKind::Auto)
-        );
-        assert_ne!(
-            PermissionModeKind::Auto.as_canonical(),
-            PermissionModeKind::AlwaysApprove.as_canonical()
-        );
-    }
-    #[test]
-    fn permission_mode_choices_include_auto_in_catalog() {
+    fn legacy_names_normalize_to_auto() {
         for c in ["default", "ask", "auto", "always-approve"] {
-            assert!(
-                PermissionModeKind::from_canonical(c).is_some(),
-                "catalog canonical {c} must parse"
+            assert_eq!(
+                PermissionModeKind::from_canonical(c),
+                Some(PermissionModeKind::Auto),
+                "{c}"
             );
         }
+        assert_eq!(PermissionModeKind::Auto.as_canonical(), "auto");
+        assert!(PermissionModeKind::Auto.is_always_approve());
+        assert!(!PermissionModeKind::Auto.is_auto());
     }
 }
 /// Canonical on/off state for `plan_mode`. Binary today (single bit
@@ -1528,7 +1501,7 @@ pub enum Effect {
     PersistMemoryFullscreen { fullscreen: bool },
     /// Persist the project-picker opt-out to `[hints] project_picker_disabled`.
     PersistProjectPickerDisabled { disabled: bool },
-    /// Persist the dashboard's `[dashboard]` configuration to `~/.grok/config.toml`.
+    /// Persist the dashboard's `[dashboard]` configuration to `~/.Doggy/config.toml`.
     /// Edge case 15: multi-pager safe via `config_toml_edit::read_config_document_for_edit`,
     /// which loads → modifies → writes the whole document. Concurrent
     /// pagers may produce last-writer-wins behaviour but never corrupt
@@ -1554,7 +1527,7 @@ pub enum Effect {
         session_id: Option<acp::SessionId>,
         persist: PermissionModePersist,
     },
-    /// Persist a typed setting to `~/.grok/config.toml`. On failure,
+    /// Persist a typed setting to `~/.Doggy/config.toml`. On failure,
     /// rolls the in-memory cache back to `rollback_value`.
     PersistSetting {
         key: crate::settings::SettingKey,
@@ -1911,7 +1884,7 @@ pub enum Effect {
     /// Clear the "copied!" feedback after a delay.
     ScheduleClearAuthCopied,
     /// Register the current session in the active-sessions crash-recovery
-    /// registry (`~/.grok/active_sessions.json`).
+    /// registry (`~/.Doggy/active_sessions.json`).
     RegisterActiveSession {
         session_id: acp::SessionId,
         cwd: String,

@@ -1,5 +1,6 @@
 # Build
 /target
+.tools/
 **/*.rs.bk
 
 # OS / editor
@@ -33,3 +34,9 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# One-off rebrand / migration helpers (local only)
+scripts/_*.py
+scripts/fix_ui_branding.py
+scripts/patch_modes_branding.py
+scripts/resample_doggy_logo.py

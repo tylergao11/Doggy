@@ -473,7 +473,7 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
         ActionDef {
             id: ActionId::CycleMode,
             label: "mode",
-            description: "Cycle mode (Normal / Plan / Always-approve)",
+            description: "Cycle mode (Plan / Auto)",
             // All Shift+Tab encodings — see `input::key::shift_tab_keys()`.
             default_key: crate::input::key::shift_tab_keys()[0],
             alt_keys: crate::input::key::shift_tab_keys()[1..].to_vec(),
@@ -483,7 +483,7 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
             hint_key_display: Some("Shift+Tab"),
             requires_confirmation: false,
             long_help: Some(
-                "Steps the session mode: Normal -> Plan -> Always-Approve -> Normal.\nPlan keeps the agent planning first and writes no files; Always-Approve runs every tool call without asking.\nCtrl+O toggles auto-approve directly.",
+                "Steps the session form: Plan ↔ Auto.\nPlan: plan-file gate only.\nAuto: tools auto-run without permission prompts.",
             ),
         },
         // ── Panes (agent-level — toggle side panes) ─────────────────
@@ -703,8 +703,8 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
         // ── Agent ────────────────────────────────────────────────────
         ActionDef {
             id: ActionId::ToggleYolo,
-            label: "yolo",
-            description: "Toggle always-approve",
+            label: "auto",
+            description: "Toggle Auto (tools auto-run)",
             default_key: key!('o', CONTROL),
             alt_keys: vec![],
             category: Category::Session,
@@ -877,7 +877,7 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
         // the registry under `When::DashboardFocused`. The dispatch
         // path in `dashboard::state::handle_key` looks these up via
         // `registry.lookup(key, When::DashboardFocused)` so users can
-        // rebind any of them through `~/.grok/config.toml`.
+        // rebind any of them through `~/.Doggy/config.toml`.
         ActionDef {
             id: ActionId::DashboardSelectNext,
             label: "next",
@@ -962,7 +962,7 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
             hint_key_display: Some("Shift+Tab"),
             requires_confirmation: false,
             long_help: Some(
-                "Cycles the dispatch mode for agents you launch from the dashboard: Normal, Plan, then Always-Approve.\nPlan has new agents plan before changing files; Always-Approve runs their tools without prompting.\nMirrors the in-session Shift+Tab cycle, applied to new dispatches.",
+                "Cycles the dispatch form for new agents: Plan ↔ Auto.\nMirrors the in-session Shift+Tab cycle.",
             ),
         },
         ActionDef {
@@ -1067,8 +1067,8 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
         // view (and from inside the session overlay).
         ActionDef {
             id: ActionId::DashboardToggleAutoApprove,
-            label: "always-approve",
-            description: "Toggle always-approve",
+            label: "auto",
+            description: "Toggle Auto mode",
             default_key: key!('o', CONTROL),
             alt_keys: vec![],
             category: Category::Dashboard,

@@ -531,7 +531,7 @@ pub fn current_value_for(
         "scroll_lines" => Some(SettingValue::Int(
             crate::appearance::cache::load_scroll_lines()
                 .map(i64::from)
-                .unwrap_or(3),
+                .unwrap_or(6),
         )),
         // Live cache (like `render_mermaid`).
         "show_thinking_blocks" => Some(SettingValue::Bool(
@@ -599,17 +599,8 @@ pub fn current_value_for(
         "render_mermaid" => Some(SettingValue::Enum(
             crate::appearance::cache::load_render_mermaid().as_canonical(),
         )),
-        // permission_mode: live snapshot wins over on-disk value.
-        // yolo=true → "always-approve"; else honor ui ("auto" / "default" / "ask").
-        "permission_mode" => Some(SettingValue::Enum(if pager.yolo_mode {
-            "always-approve"
-        } else if matches!(ui.permission_mode.as_deref(), Some("auto")) {
-            "auto"
-        } else if matches!(ui.permission_mode.as_deref(), Some("default")) {
-            "default"
-        } else {
-            "ask"
-        })),
+        // permission_mode: Doggy product is Auto only (full tool auto-run).
+        "permission_mode" => Some(SettingValue::Enum("auto")),
         // remember_tool_approvals: reflects the user-config layer the modal
         // toggles (other layers feed the effective gate at spawn). None → false.
         "remember_tool_approvals" => Some(SettingValue::Bool(
@@ -948,12 +939,9 @@ mod tests {
                     );
                 }
                 ("keep_text_selection", SettingKind::Enum { default, .. }) => {
-                    let expected = if ui.keep_text_selection_enabled() {
-                        "hold"
-                    } else {
-                        "flash"
-                    };
-                    assert_eq!(*default, expected);
+                    // Default is word_select so double-click selects text
+                    // instead of folding/compressing blocks.
+                    assert_eq!(*default, "word_select");
                 }
                 // voice_capture_mode: Option<String>; None → "hold".
                 ("voice_capture_mode", SettingKind::Enum { default, .. }) => {
@@ -1056,12 +1044,12 @@ mod tests {
                         "display_refresh_auto_cadence default drifts from UiConfig::default()"
                     );
                 }
-                // scroll_lines: Option<u8>; None → registry default 3 (the
+                // scroll_lines: Option<u8>; None → registry default 6 (the
                 // display value while the per-terminal profile is in charge).
                 ("scroll_lines", SettingKind::Int { default, .. }) => {
                     assert_eq!(
                         *default,
-                        ui.scroll_lines.map(i64::from).unwrap_or(3),
+                        ui.scroll_lines.map(i64::from).unwrap_or(6),
                         "scroll_lines default drifts from UiConfig::default()"
                     );
                 }

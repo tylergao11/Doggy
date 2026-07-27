@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 const EXCLUDED_DIR_NAMES: &[&str] = &[
-    ".grok", ".cache", ".daemon", ".config", ".npm", ".cargo", ".rustup", ".vscode", ".gemini",
+    ".Doggy", ".cache", ".daemon", ".config", ".npm", ".cargo", ".rustup", ".vscode", ".gemini",
     ".hermes", ".claude",
 ];
 
@@ -254,15 +254,15 @@ mod tests {
         #[test]
         fn grok_dirs_are_unsafe() {
             if let Some(home) = dirs::home_dir() {
-                assert!(!is_project_dir(&home.join(".grok")));
-                assert!(!is_project_dir(&home.join(".grok/bin")));
+                assert!(!is_project_dir(&home.join(".Doggy")));
+                assert!(!is_project_dir(&home.join(".Doggy/bin")));
             }
         }
 
         #[test]
         fn grok_prefixed_dirs_are_unsafe() {
             if let Some(home) = dirs::home_dir() {
-                assert!(!is_project_dir(&home.join(".grok-proxy-work")));
+                assert!(!is_project_dir(&home.join(".Doggy-proxy-work")));
             }
         }
 

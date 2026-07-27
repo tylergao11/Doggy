@@ -1526,10 +1526,6 @@ pub(super) fn apply_pending_dispatch_config(
         agent.session.deferred_model_switch = m.effort.map(|e| (m.id.clone(), Some(e)));
     }
     match pending_mode {
-        DashboardDispatchMode::Normal => {
-            // Explicit normal overrides any `app.default_yolo` seed.
-            agent.session.yolo_mode = false;
-        }
         DashboardDispatchMode::Plan => {
             agent.session.yolo_mode = false;
             agent.deferred_session_mode = Some(xai_grok_tools::types::SessionMode::Plan);
@@ -1537,15 +1533,14 @@ pub(super) fn apply_pending_dispatch_config(
             // opened via Ctrl+S, before the ACP round-trip confirms it.
             agent.plan_mode_pending = Some(true);
         }
-        // Backstop: staging is already gated, but this write sits outside
-        // `set_yolo_mode_inner`, so re-check the pin here.
-        DashboardDispatchMode::AlwaysApprove => {
+        // Auto (and deprecated Normal/AlwaysApprove aliases): full tool auto-run.
+        DashboardDispatchMode::Auto
+        | DashboardDispatchMode::AlwaysApprove
+        | DashboardDispatchMode::Normal => {
             if let Some(warning) = policy_block {
                 agent.session.yolo_mode = false;
                 agent.show_toast(warning);
             } else {
-                // Client-side auto-approve for the spawned session (per-spawn;
-                // not persisted as a global default).
                 agent.session.yolo_mode = true;
             }
         }
