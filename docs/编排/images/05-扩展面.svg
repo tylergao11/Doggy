@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="300" viewBox="0 0 700 300">
+  <style>
+    .b { fill:#f8fafc; stroke:#334155; stroke-width:1.5; rx:10; }
+    .core { fill:#e0f2fe; stroke:#0369a1; stroke-width:2; rx:14; }
+    .t { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:13px; fill:#0f172a; text-anchor:middle; font-weight:600; }
+    .s { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:11px; fill:#475569; text-anchor:middle; }
+    .h { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:14px; fill:#0f172a; font-weight:700; }
+  </style>
+
+  <text class="h" x="20" y="28">扩展三通道 + 模式开关</text>
+
+  <rect class="b" x="30" y="55" width="170" height="80" style="fill:#f0fdf4;stroke:#15803d"/>
+  <text class="t" x="115" y="85">进 Prompt</text>
+  <text class="s" x="115" y="105">Skills · AGENTS.md</text>
+  <text class="s" x="115" y="120">Memory · Plugins</text>
+
+  <rect class="b" x="265" y="55" width="170" height="80" style="fill:#fef3c7;stroke:#b45309"/>
+  <text class="t" x="350" y="85">横切 Hooks</text>
+  <text class="s" x="350" y="105">拦 / 记 / 自动副作用</text>
+  <text class="s" x="350" y="120">PreToolUse 可 deny</text>
+
+  <rect class="b" x="500" y="55" width="170" height="80" style="fill:#fef9c3;stroke:#a16207"/>
+  <text class="t" x="585" y="85">进 Tools</text>
+  <text class="s" x="585" y="105">内置工具 · MCP</text>
+  <text class="s" x="585" y="120">能力扩展</text>
+
+  <line x1="115" y1="135" x2="350" y2="175" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="350" y1="135" x2="350" y2="175" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="585" y1="135" x2="350" y2="175" stroke="#94a3b8" stroke-width="1.5"/>
+
+  <rect class="core" x="230" y="175" width="240" height="50"/>
+  <text class="t" x="350" y="205">Agentic Loop 主循环</text>
+
+  <rect class="b" x="80" y="245" width="120" height="40"/>
+  <text class="t" x="140" y="270">Normal</text>
+  <rect class="b" x="220" y="245" width="120" height="40" style="fill:#ede9fe;stroke:#6d28d9"/>
+  <text class="t" x="280" y="270">Plan 先规划</text>
+  <rect class="b" x="360" y="245" width="120" height="40" style="fill:#ffe4e6;stroke:#be123c"/>
+  <text class="t" x="420" y="270">Always 全批</text>
+  <rect class="b" x="500" y="245" width="120" height="40" style="fill:#ecfeff;stroke:#0e7490"/>
+  <text class="t" x="560" y="270">Goal 长目标</text>
+</svg>

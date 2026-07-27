@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="320" viewBox="0 0 700 320">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <style>
+    .b { fill:#f8fafc; stroke:#334155; stroke-width:1.5; rx:10; }
+    .p1 { fill:#fef3c7; stroke:#b45309; stroke-width:1.5; rx:10; }
+    .p2 { fill:#dbeafe; stroke:#1d4ed8; stroke-width:1.5; rx:10; }
+    .ok { fill:#dcfce7; stroke:#15803d; stroke-width:1.5; rx:10; }
+    .bad { fill:#fee2e2; stroke:#b91c1c; stroke-width:1.5; rx:10; }
+    .t { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:13px; fill:#0f172a; text-anchor:middle; font-weight:600; }
+    .s { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:11px; fill:#475569; text-anchor:middle; }
+    .h { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:14px; fill:#0f172a; font-weight:700; }
+  </style>
+
+  <text class="h" x="20" y="28">工具管道：两阶段</text>
+
+  <rect class="b" x="20" y="50" width="120" height="55"/>
+  <text class="t" x="80" y="72">模型吐工具</text>
+  <text class="s" x="80" y="90">一批 tool_calls</text>
+
+  <line x1="140" y1="78" x2="175" y2="78" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+
+  <rect class="p1" x="175" y="40" width="200" height="75"/>
+  <text class="t" x="275" y="62">Phase 1 预检</text>
+  <text class="s" x="275" y="80">hooks · 权限 · Plan 门禁</text>
+  <text class="s" x="275" y="98">先问能不能跑</text>
+
+  <line x1="375" y1="78" x2="410" y2="78" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+
+  <rect class="p2" x="410" y="40" width="200" height="75"/>
+  <text class="t" x="510" y="62">Phase 2 执行</text>
+  <text class="s" x="510" y="80">同文件串行 · 跨文件并行</text>
+  <text class="s" x="510" y="98">再真的动手</text>
+
+  <line x1="610" y1="78" x2="645" y2="78" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+
+  <rect class="ok" x="645" y="50" width="40" height="55"/>
+  <text class="t" x="665" y="82">回</text>
+
+  <!-- branch outcomes -->
+  <text class="h" x="20" y="160">预检失败时</text>
+
+  <rect class="ok" x="20" y="180" width="200" height="55"/>
+  <text class="t" x="120" y="202">Hook deny</text>
+  <text class="s" x="120" y="220">原因写回 → 继续想（不杀 Turn）</text>
+
+  <rect class="bad" x="240" y="180" width="200" height="55"/>
+  <text class="t" x="340" y="202">Permission reject</text>
+  <text class="s" x="340" y="220">安全边界 → 整批停</text>
+
+  <rect class="b" x="460" y="180" width="200" height="55"/>
+  <text class="t" x="560" y="202">用户插话</text>
+  <text class="s" x="560" y="220">新消息优先，改道继续</text>
+
+  <text class="s" x="20" y="270" style="text-anchor:start">并行要点：编辑同一文件 → 排队；不同文件 / 搜索 → 一起跑。</text>
+  <text class="s" x="20" y="295" style="text-anchor:start">Hook 拦下来 ≠ 会话挂掉，模型还能改策略。</text>
+</svg>

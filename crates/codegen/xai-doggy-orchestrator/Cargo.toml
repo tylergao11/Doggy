@@ -1,0 +1,14 @@
+[package]
+license = "Apache-2.0"
+name = "xai-doggy-orchestrator"
+version = "0.1.0"
+edition.workspace = true
+description = "Doggy task completion authority: Round vs Task, open-items + audit gate (pure policy, no I/O)."
+
+[dependencies]
+# Minimal: JSON parse for audit-agent structured output only.
+# No SessionActor / network / protoc deps.
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

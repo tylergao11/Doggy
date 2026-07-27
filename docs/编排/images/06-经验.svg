@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="360" viewBox="0 0 700 360">
+  <style>
+    .card { fill:#f8fafc; stroke:#cbd5e1; stroke-width:1.2; rx:10; }
+    .n { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:12px; fill:#0369a1; font-weight:700; }
+    .t { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:13px; fill:#0f172a; font-weight:600; }
+    .s { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:11px; fill:#64748b; }
+    .h { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:14px; fill:#0f172a; font-weight:700; }
+  </style>
+  <text class="h" x="20" y="28">抄作业：8 条（一句话版）</text>
+
+  <rect class="card" x="20" y="45" width="320" height="60"/>
+  <text class="n" x="35" y="68">1</text>
+  <text class="t" x="55" y="68">Session 单写者</text>
+  <text class="s" x="35" y="90">状态只在一个 actor 里改</text>
+
+  <rect class="card" x="360" y="45" width="320" height="60"/>
+  <text class="n" x="375" y="68">2</text>
+  <text class="t" x="395" y="68">Turn 可中断</text>
+  <text class="s" x="375" y="90">取消 / 权限 / 插话都是出口</text>
+
+  <rect class="card" x="20" y="120" width="320" height="60"/>
+  <text class="n" x="35" y="143">3</text>
+  <text class="t" x="55" y="143">工具两阶段</text>
+  <text class="s" x="35" y="165">先预检，再执行</text>
+
+  <rect class="card" x="360" y="120" width="320" height="60"/>
+  <text class="n" x="375" y="143">4</text>
+  <text class="t" x="395" y="143">并行有文件锁</text>
+  <text class="s" x="375" y="165">同文件串行，跨文件并行</text>
+
+  <rect class="card" x="20" y="195" width="320" height="60"/>
+  <text class="n" x="35" y="218">5</text>
+  <text class="t" x="55" y="218">扩展分三通道</text>
+  <text class="s" x="35" y="240">Prompt / Hook / Tool 别揉一块</text>
+
+  <rect class="card" x="360" y="195" width="320" height="60"/>
+  <text class="n" x="375" y="218">6</text>
+  <text class="t" x="395" y="218">子 Agent 独立会话</text>
+  <text class="s" x="375" y="240">摘要回传，不共享全文</text>
+
+  <rect class="card" x="20" y="270" width="320" height="60"/>
+  <text class="n" x="35" y="293">7</text>
+  <text class="t" x="55" y="293">Mode 用硬门禁</text>
+  <text class="s" x="35" y="315">关键不变量写进 harness</text>
+
+  <rect class="card" x="360" y="270" width="320" height="60"/>
+  <text class="n" x="375" y="293">8</text>
+  <text class="t" x="395" y="293">Agent 可移植</text>
+  <text class="s" x="375" y="315">同一配置服务 TUI/ACP/CI</text>
+</svg>

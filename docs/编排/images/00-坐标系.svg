@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="140" viewBox="0 0 720 140">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .box { fill:#f8fafc; stroke:#334155; stroke-width:1.5; rx:10; }
+      .t { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:13px; fill:#0f172a; text-anchor:middle; }
+      .s { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:11px; fill:#64748b; text-anchor:middle; }
+    </style>
+  </defs>
+  <rect class="box" x="10" y="35" width="110" height="60"/>
+  <text class="t" x="65" y="60">用户 / IDE</text>
+  <text class="s" x="65" y="78">输入需求</text>
+
+  <line x1="120" y1="65" x2="150" y2="65" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect class="box" x="150" y="35" width="110" height="60"/>
+  <text class="t" x="205" y="60">入口</text>
+  <text class="s" x="205" y="78">TUI · ACP · CI</text>
+
+  <line x1="260" y1="65" x2="290" y2="65" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect class="box" x="290" y="35" width="130" height="60" style="fill:#e0f2fe;stroke:#0369a1"/>
+  <text class="t" x="355" y="60">SessionActor</text>
+  <text class="s" x="355" y="78">编排中心</text>
+
+  <line x1="420" y1="65" x2="450" y2="65" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect class="box" x="450" y="35" width="110" height="60"/>
+  <text class="t" x="505" y="60">工具管道</text>
+  <text class="s" x="505" y="78">hooks · 执行</text>
+
+  <line x1="560" y1="65" x2="590" y2="65" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect class="box" x="590" y="35" width="120" height="60"/>
+  <text class="t" x="650" y="60">真实世界</text>
+  <text class="s" x="650" y="78">文件 · 终端 · MCP</text>
+
+  <path d="M650 95 L650 115 L355 115 L355 95" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <text class="s" x="510" y="130">结果写回对话 → 再想下一步</text>
+</svg>

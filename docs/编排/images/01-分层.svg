@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420">
+  <style>
+    .layer { stroke-width:1.5; rx:12; }
+    .t { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:14px; fill:#0f172a; font-weight:600; }
+    .s { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:12px; fill:#475569; }
+    .n { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:12px; fill:#64748b; }
+  </style>
+
+  <rect class="layer" x="40" y="20" width="560" height="60" fill="#f1f5f9" stroke="#64748b"/>
+  <text class="t" x="60" y="45">① 入口</text>
+  <text class="s" x="60" y="65">TUI 界面 · ACP(IDE) · Headless(脚本/CI)</text>
+
+  <rect class="layer" x="40" y="100" width="560" height="70" fill="#e0f2fe" stroke="#0369a1"/>
+  <text class="t" x="60" y="128">② Runtime（shell）— 编排中心</text>
+  <text class="s" x="60" y="150">SessionActor · Prompt 队列 · 子代理协调器</text>
+
+  <rect class="layer" x="40" y="190" width="560" height="60" fill="#f0fdf4" stroke="#15803d"/>
+  <text class="t" x="60" y="215">③ Agent 定义</text>
+  <text class="s" x="60" y="235">prompt · 工具白名单 · skills（配置包，不是循环）</text>
+
+  <rect class="layer" x="40" y="270" width="560" height="60" fill="#fef9c3" stroke="#a16207"/>
+  <text class="t" x="60" y="295">④ 工具层</text>
+  <text class="s" x="60" y="315">内置 tools · MCP · 统一 Tool 协议</text>
+
+  <rect class="layer" x="40" y="350" width="560" height="50" fill="#ffedd5" stroke="#c2410c"/>
+  <text class="t" x="60" y="372">⑤ Host 主机</text>
+  <text class="s" x="60" y="390">文件系统 · Git/worktree · Shell/沙箱</text>
+
+  <text class="n" x="40" y="415">上层依赖下层；下层不知道 TUI 长什么样</text>
+</svg>

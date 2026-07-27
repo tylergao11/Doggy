@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="340" viewBox="0 0 700 340">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <style>
+    .p { fill:#e0f2fe; stroke:#0369a1; stroke-width:1.5; rx:12; }
+    .c { fill:#f8fafc; stroke:#334155; stroke-width:1.5; rx:12; }
+    .k { fill:#fef3c7; stroke:#b45309; stroke-width:1.5; rx:12; }
+    .t { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:13px; fill:#0f172a; text-anchor:middle; font-weight:600; }
+    .s { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:11px; fill:#475569; text-anchor:middle; }
+    .h { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size:14px; fill:#0f172a; font-weight:700; }
+  </style>
+
+  <text class="h" x="20" y="28">子代理：完整子会话，不是函数调用</text>
+
+  <rect class="p" x="250" y="50" width="200" height="55"/>
+  <text class="t" x="350" y="72">Parent 主会话</text>
+  <text class="s" x="350" y="90">自己的上下文</text>
+
+  <line x1="350" y1="105" x2="350" y2="135" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+  <rect class="k" x="250" y="135" width="200" height="40"/>
+  <text class="t" x="350" y="160">Coordinator 调度</text>
+
+  <line x1="280" y1="175" x2="120" y2="210" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="350" y1="175" x2="350" y2="210" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="420" y1="175" x2="580" y2="210" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+
+  <rect class="c" x="40" y="210" width="160" height="55"/>
+  <text class="t" x="120" y="232">explore</text>
+  <text class="s" x="120" y="250">调研 · 偏只读</text>
+
+  <rect class="c" x="270" y="210" width="160" height="55"/>
+  <text class="t" x="350" y="232">general-purpose</text>
+  <text class="s" x="350" y="250">全能干活</text>
+
+  <rect class="c" x="500" y="210" width="160" height="55"/>
+  <text class="t" x="580" y="232">plan</text>
+  <text class="s" x="580" y="250">写计划 · 不改业务代码</text>
+
+  <path d="M120 265 L120 295 L350 295 L350 190" fill="none" stroke="#15803d" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#a)"/>
+  <path d="M350 265 L350 295" fill="none" stroke="#15803d" stroke-width="1.5"/>
+  <path d="M580 265 L580 295 L350 295" fill="none" stroke="#15803d" stroke-width="1.5"/>
+  <text class="s" x="450" y="320">各自跑完 → 摘要回传 Parent（不共享全文上下文）</text>
+</svg>

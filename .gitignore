@@ -1,0 +1,35 @@
+# Build
+/target
+**/*.rs.bk
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# Dependencies / generated site assets
+**/node_modules/
+docs/node_modules/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+
+# Local tooling / agent state
+.grok/
+.doggy/
+*.log
+
+# Python / misc leftovers
+__pycache__/
+*.pyc
+.venv/
+venv/
