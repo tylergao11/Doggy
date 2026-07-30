@@ -1359,24 +1359,46 @@ pub(crate) async fn handle_subagent_request(
                     fut.await
                 }
                 ForegroundWait::Budget => {
-                    tracing::info!(
-                        subagent_id = % request.id, budget_ms = subagent_await_budget()
-                        .as_millis() as u64,
-                        "foreground subagent exceeded await budget; auto-backgrounding (child keeps running)",
-                    );
-                    if let Some(tx) = result_tx.take() {
-                        let _ = tx
-                            .send(SubagentResult {
-                                backgrounded: true,
-                                subagent_id: request.id.clone(),
-                                child_session_id: child_session_id.0.to_string(),
-                                ..Default::default()
-                            });
+                    // Model-facing Task spawns (`surface_completion: true`) may
+                    // be auto-backgrounded so the parent turn is not stuck for
+                    // the full 600s budget — the model polls via get_task_output.
+                    //
+                    // Harness-internal spawns (`surface_completion: false`:
+                    // doggy auditor, goal classifier/planner/summarizer, …)
+                    // have no poll loop. Early-sending a hollow `backgrounded`
+                    // result and dropping `result_tx` leaves the parent forever
+                    // without the terminal text (audit PASS visible in
+                    // SubagentFinished but doggy stuck on `result_rx`). Keep
+                    // holding `result_tx` and wait for the real completion.
+                    if !request.surface_completion {
+                        tracing::info!(
+                            subagent_id = % request.id,
+                            budget_ms = subagent_await_budget().as_millis() as u64,
+                            "harness-internal foreground subagent exceeded await \
+                             budget; continuing wait so terminal result still \
+                             reaches the oneshot (no poll surface)",
+                        );
+                        fut.await
+                    } else {
+                        tracing::info!(
+                            subagent_id = % request.id, budget_ms = subagent_await_budget()
+                            .as_millis() as u64,
+                            "foreground subagent exceeded await budget; auto-backgrounding (child keeps running)",
+                        );
+                        if let Some(tx) = result_tx.take() {
+                            let _ = tx
+                                .send(SubagentResult {
+                                    backgrounded: true,
+                                    subagent_id: request.id.clone(),
+                                    child_session_id: child_session_id.0.to_string(),
+                                    ..Default::default()
+                                });
+                        }
+                        parent_wait_guard.take();
+                        request.run_in_background = true;
+                        coordinator.borrow_mut().mark_backgrounded(&request.id);
+                        fut.await
                     }
-                    parent_wait_guard.take();
-                    request.run_in_background = true;
-                    coordinator.borrow_mut().mark_backgrounded(&request.id);
-                    fut.await
                 }
             }
         } else {

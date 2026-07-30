@@ -484,7 +484,17 @@ pub(super) async fn run_session(
             await { Ok(SubagentUsageApply::AttributedToPrompt) => { let _ = respond_to
             .send(()); } Ok(SubagentUsageApply::SessionOnly) => { let _ = session
             .mark_subagent_usage_not_applied(parent_prompt_id.as_deref(),). await; let _
-            = respond_to.send(()); } Err(()) => {} } }
+            = respond_to.send(()); } Err(()) => {
+            // Always ack: the child completion path `ack.await`s before
+            // `result_tx.send`. A silent Err hung harness-internal parents
+            // (doggy auditor) forever on `result_rx` after the child finished.
+            tracing::warn!(
+                session_id = % session.session_info.id.0,
+                parent_prompt_id = ? parent_prompt_id,
+                "RecordSubagentUsage apply failed; still acking so subagent \
+                 oneshot can deliver",
+            );
+            let _ = respond_to.send(()); } } }
             SessionCommand::MarkSubagentUsageNotApplied { parent_prompt_id, respond_to, }
             => { if session.mark_apply_miss_incomplete(parent_prompt_id.as_deref()).
             await { let _ = respond_to.send(()); } }

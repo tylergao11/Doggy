@@ -14,9 +14,9 @@ pub enum TaskPhase {
     Executing,
     /// Round ended; evaluating open items (decision step, usually instantaneous).
     CheckOpen,
-    /// Audit subagent is running or has been requested.
+    /// Reserved historical phase (Doggy audit subagent removed); unused.
     Audit,
-    /// Audit failed; about to inject fix findings and re-enter Executing.
+    /// Verification rejected; about to inject fix findings and re-enter Executing.
     Fix,
     /// Task accepted — the only successful terminal phase.
     Done,
@@ -31,7 +31,7 @@ pub enum TaskStatus {
     Idle,
     /// Task is running (any non-terminal phase except Idle).
     Active,
-    /// Accepted via audit pass. Only the orchestrator may set this.
+    /// Accepted via verification Achieved. Only the orchestrator may set this.
     Done,
     /// Not accepted; stopped for a [`PauseReason`].
     Paused,
@@ -39,8 +39,8 @@ pub enum TaskStatus {
 
 /// Why a task entered [`TaskStatus::Paused`].
 ///
-/// These are **safety valves**, not business abandonment after audit failure.
-/// Audit failure never becomes a pause reason.
+/// These are **safety valves**, not business abandonment after verification
+/// rejection. Rejected verification injects Fix and continues — never pauses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PauseReason {
     /// User cancelled the turn / task.

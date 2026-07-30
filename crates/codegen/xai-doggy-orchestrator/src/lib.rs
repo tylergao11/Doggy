@@ -9,12 +9,10 @@
 //! Doggy root-cause fix:
 //!
 //! - **Round** = one `process_conversation_turn` (want→do→want)
-//! - **Task** = user goal until audit acceptance
-//! - Only this module's [`decide::decide_after_audit`] may return
+//! - **Task** = user goal until verification acceptance (goal classifier /
+//!   skeptic panel) — **not** a separate Doggy audit subagent
+//! - Only this module's [`decide::decide_after_round`] may return
 //!   [`decide::TaskDecision::TaskDone`]
-//!
-//! Phase A ships pure policy + unit tests. Host wiring into `handle_prompt`
-//! is Phase B+.
 //!
 //! Shell re-exports this crate as `xai_grok_shell::session::orchestrator`.
 //!
@@ -30,7 +28,7 @@ pub mod state;
 pub use audit::{AuditFinding, AuditVerdict};
 pub use audit_parse::{AuditParseError, parse_audit_agent_output};
 pub use decide::{
-    AuditEndView, RoundEndView, TaskDecision, TaskMachine, decide_after_audit, decide_after_round,
+    RoundEndView, TaskDecision, TaskMachine, VerificationOutcome, decide_after_round,
 };
 pub use inject::Injection;
 pub use open_items::{OpenItem, OpenItemsSnapshot};
