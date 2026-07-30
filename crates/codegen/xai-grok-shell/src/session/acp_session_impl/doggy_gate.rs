@@ -165,10 +165,17 @@ impl SessionActor {
     async fn doggy_mark_task_done(&self) {
         let current_tokens = self.chat_state_handle.get_total_tokens().await as i64;
         let (tokens_used, finished_marginal) = self.goal_tokens(current_tokens);
+        // IMPORTANT: prune BEFORE taking `goal_tracker` for `complete()`.
+        // `prune_subagent_records_for_active_goal` itself locks `goal_tracker`
+        // (parking_lot::Mutex is NOT reentrant). Calling it while already
+        // holding the lock deadlocks the entire session LocalSet:
+        // completion_phase stays "checking", cancel never processes, and new
+        // prompts sit behind `turn_running` forever. Observed repeatedly after
+        // Achieved → TaskDone (e.g. Luoxia sessions 2026-07-30).
+        self.prune_subagent_records_for_active_goal();
         {
             let mut tracker = self.goal_tracker.lock();
             if tracker.status() == Some(crate::session::goal_tracker::GoalStatus::Active) {
-                self.prune_subagent_records_for_active_goal();
                 tracker.complete();
                 let notify = self.goal_notify_sender();
                 notify.emit_goal_updated(&mut tracker, tokens_used, finished_marginal);

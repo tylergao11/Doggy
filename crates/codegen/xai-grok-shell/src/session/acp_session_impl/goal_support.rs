@@ -1460,14 +1460,25 @@ impl SessionActor {
     /// Drop every subagent record attributed to the currently-loaded
     /// goal. Called before `tracker.complete()` so the registry
     /// doesn't accumulate orphaned records across goals.
+    ///
+    /// **Must not be called while already holding `goal_tracker`.**
+    /// This method locks `goal_tracker` itself; `parking_lot::Mutex` is
+    /// not reentrant, and a nested lock freezes the session LocalSet
+    /// (cancel + prompts stop working). See `doggy_mark_task_done`.
     pub(super) fn prune_subagent_records_for_active_goal(&self) {
         let goal_id = match self.goal_tracker.lock().snapshot() {
             Some(o) => o.goal_id.clone(),
             None => return,
         };
+        self.prune_subagent_records_for_goal(&goal_id);
+    }
+
+    /// Drop subagent records for a known goal id without touching
+    /// `goal_tracker` (safe while the caller already holds that lock).
+    pub(super) fn prune_subagent_records_for_goal(&self, goal_id: &str) {
         self.subagent_token_records
             .lock()
-            .retain(|_, r| r.goal_id.as_deref() != Some(goal_id.as_str()));
+            .retain(|_, r| r.goal_id.as_deref() != Some(goal_id));
     }
 
     /// Push the tool-layer `GoalLoopActive` flag so per-tool-call bg-task /
