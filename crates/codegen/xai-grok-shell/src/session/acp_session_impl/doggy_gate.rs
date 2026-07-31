@@ -163,6 +163,12 @@ impl SessionActor {
 
     /// Sole path that marks the goal Complete after orchestrator TaskDone.
     async fn doggy_mark_task_done(&self) {
+        let sid = self.session_info.id.0.as_ref();
+        xai_grok_telemetry::unified_log::info(
+            "doggy.mark_done.enter",
+            Some(sid),
+            None,
+        );
         let current_tokens = self.chat_state_handle.get_total_tokens().await as i64;
         let (tokens_used, finished_marginal) = self.goal_tokens(current_tokens);
         // IMPORTANT: prune BEFORE taking `goal_tracker` for `complete()`.
@@ -173,25 +179,59 @@ impl SessionActor {
         // prompts sit behind `turn_running` forever. Observed repeatedly after
         // Achieved → TaskDone (e.g. Luoxia sessions 2026-07-30).
         self.prune_subagent_records_for_active_goal();
-        {
+        // State-only Complete under the mutex; rescue + remove_dir_all run
+        // AFTER the lock is released on a blocking pool. Holding the lock
+        // across Windows FS (antivirus / locked files) freezes cancel the
+        // same way the old re-entrant prune deadlock did.
+        let deferred_fs = {
             let mut tracker = self.goal_tracker.lock();
             if tracker.status() == Some(crate::session::goal_tracker::GoalStatus::Active) {
-                tracker.complete();
-                let notify = self.goal_notify_sender();
-                notify.emit_goal_updated(&mut tracker, tokens_used, finished_marginal);
+                let (applied, job) = tracker.complete_defer_scratch_cleanup();
+                if applied {
+                    let notify = self.goal_notify_sender();
+                    notify.emit_goal_updated(&mut tracker, tokens_used, finished_marginal);
+                }
+                job
+            } else {
+                None
             }
-        }
-        // Closing summarizer only after true Done (was previously on Achieved).
+        };
+        // Surface Done to the UI immediately after in-memory Complete so a
+        // stuck scratch rescue/delete cannot leave the chip on "checking".
         let attempt = self
             .goal_tracker
             .lock()
             .snapshot()
             .map(|o| o.classifier_runs_attempted)
             .unwrap_or(0);
-        // Surface Done to the UI before the (optional) summarizer so a slow
-        // summarizer cannot leave the chip stuck on "checking".
         self.doggy_emit_completion_ui("done", &[]).await;
+        xai_grok_telemetry::unified_log::info(
+            "doggy.mark_done.state_done",
+            Some(sid),
+            Some(serde_json::json!({ "attempt": attempt, "has_fs_job": deferred_fs.is_some() })),
+        );
+        if let Some(job) = deferred_fs {
+            // Optimistic durable path (deterministic from src filename) so the
+            // UI "See details" link does not keep pointing into a dir we are
+            // about to delete. Do NOT await the blocking job: a stuck Windows
+            // `remove_dir_all` / antivirus lock must not freeze cancel.
+            if let Some(src) = job.details_src.as_ref()
+                && let Some(name) = src.file_name()
+            {
+                let dest = job.goal_dir.join(name);
+                self.goal_tracker.lock().apply_rescued_details_path(dest);
+            }
+            tokio::task::spawn_blocking(move || {
+                let _ = job.run();
+            });
+        }
+        // Closing summarizer only after true Done (was previously on Achieved).
         self.maybe_run_goal_summarizer(attempt).await;
+        xai_grok_telemetry::unified_log::info(
+            "doggy.mark_done.exit",
+            Some(sid),
+            Some(serde_json::json!({ "attempt": attempt })),
+        );
         tracing::info!(
             session_id = %self.session_info.id.0,
             "doggy: TaskDone — goal marked complete by orchestrator"
@@ -279,6 +319,22 @@ impl SessionActor {
             verification,
         });
         machine.apply(&decision);
+        let decision_kind = match &decision {
+            TaskDecision::RunAnotherRound { injection } => match injection {
+                Injection::Fix { .. } => "fix",
+                Injection::Continue { .. } => "continue",
+            },
+            TaskDecision::TaskDone => "done",
+            TaskDecision::TaskPaused { .. } => "paused",
+        };
+        xai_grok_telemetry::unified_log::info(
+            "doggy.after_round",
+            Some(self.session_info.id.0.as_ref()),
+            Some(serde_json::json!({
+                "decision": decision_kind,
+                "open": open_items.summary_line(),
+            })),
+        );
         tracing::info!(
             session_id = %self.session_info.id.0,
             ?decision,

@@ -10,8 +10,68 @@
 //! [`GoalStatus::UserPaused`] so a corrupt or forward-version snapshot can
 //! never resurrect as a self-driving goal.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+/// Terminal goal FS work that must **not** run on the session LocalSet while
+/// holding `goal_tracker`. See `doggy_mark_task_done`.
+///
+/// Contains only owned paths captured under the lock; [`Self::run`] does
+/// rescue + `remove_dir_all` and returns the durable details path if rescue
+/// succeeded (caller stamps it back with
+/// [`GoalTracker::apply_rescued_details_path`]).
+#[derive(Debug, Clone)]
+pub struct DeferredGoalFsCleanup {
+    pub scratch_root: PathBuf,
+    pub details_src: Option<PathBuf>,
+    pub goal_dir: PathBuf,
+}
+
+impl DeferredGoalFsCleanup {
+    /// Rescue classifier details out of the scratch root, then delete the
+    /// scratch root. Safe to call from `spawn_blocking`.
+    pub fn run(self) -> Option<PathBuf> {
+        let rescued = self.rescue_details_only();
+        let _ = std::fs::remove_dir_all(&self.scratch_root);
+        rescued
+    }
+
+    /// Move/copy details (+ inline skeptic reports) into `goal_dir` without
+    /// deleting the scratch root. Used by the inline rescue path.
+    fn rescue_details_only(&self) -> Option<PathBuf> {
+        let src = self.details_src.as_ref()?;
+        rescue_classifier_details_paths(src, &self.scratch_root, &self.goal_dir)
+    }
+}
+
+/// Path-only body of classifier-details rescue (no tracker / no lock).
+fn rescue_classifier_details_paths(
+    src: &Path,
+    scratch_root: &Path,
+    goal_dir: &Path,
+) -> Option<PathBuf> {
+    if src
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    if !src.starts_with(scratch_root) {
+        return None;
+    }
+    if verify_owned_real_dir(scratch_root).is_err() {
+        return None;
+    }
+    let name = src.file_name()?;
+    let dest = goal_dir.join(name);
+    let _ = std::fs::create_dir_all(goal_dir);
+    if std::fs::rename(src, &dest).is_ok() || copy_no_follow(src, &dest).is_ok() {
+        append_skeptic_reports(scratch_root, &dest);
+        Some(dest)
+    } else {
+        None
+    }
+}
 
 /// Consecutive identical gap fingerprints that trip the stall
 /// early-exit: two in a row means the model produced no change in the
@@ -860,40 +920,32 @@ impl GoalTracker {
     /// [`copy_no_follow`]. The path is stamped only after a move from
     /// the verified root succeeds; otherwise it is left unchanged.
     ///
-    /// Runs under the tracker lock — bounded I/O (≤ the panel cap) on
-    /// cold, one-shot transitions.
+    /// Prefer [`DeferredGoalFsCleanup`] from the session LocalSet so this
+    /// FS work does not run while holding `goal_tracker` on the actor
+    /// thread (cancel freezes if rename/copy/antivirus blocks).
     fn rescue_classifier_details(&mut self) {
-        let goal_dir = self.goal_dir();
-        let Some(o) = self.orchestration.as_mut() else {
+        let Some(job) = self.deferred_fs_cleanup_job() else {
             return;
         };
-        let Some(src) = o.last_classifier_details_path.as_deref() else {
-            return;
-        };
-        let src = PathBuf::from(src);
-        if src
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            return;
+        if let Some(dest) = job.rescue_details_only() {
+            self.apply_rescued_details_path(dest);
         }
-        // Only artifacts inside THIS goal's scratch root are at risk.
-        let scratch_root = goal_scratch_root(&o.verifier_id);
-        if !src.starts_with(&scratch_root) {
-            return;
-        }
-        // A symlink-squatted root could stage an attacker file for the
-        // rename below.
-        if verify_owned_real_dir(&scratch_root).is_err() {
-            return;
-        }
-        let Some(name) = src.file_name() else {
-            return;
-        };
-        let dest = goal_dir.join(name);
-        let _ = std::fs::create_dir_all(&goal_dir);
-        if std::fs::rename(&src, &dest).is_ok() || copy_no_follow(&src, &dest).is_ok() {
-            append_skeptic_reports(&scratch_root, &dest);
+    }
+
+    /// Snapshot paths needed for terminal FS cleanup without doing I/O.
+    fn deferred_fs_cleanup_job(&self) -> Option<DeferredGoalFsCleanup> {
+        let o = self.orchestration.as_ref()?;
+        Some(DeferredGoalFsCleanup {
+            scratch_root: goal_scratch_root(&o.verifier_id),
+            details_src: o.last_classifier_details_path.as_ref().map(PathBuf::from),
+            goal_dir: self.goal_dir(),
+        })
+    }
+
+    /// Stamp a path produced by [`DeferredGoalFsCleanup::run`] back onto
+    /// the orchestration after the mutex was released for the FS work.
+    pub fn apply_rescued_details_path(&mut self, dest: PathBuf) {
+        if let Some(o) = self.orchestration.as_mut() {
             o.last_classifier_details_path = Some(dest.to_string_lossy().into_owned());
         }
     }
@@ -1076,7 +1128,31 @@ impl GoalTracker {
 
     /// Mark the goal as complete. Accepts `Active` or any paused variant.
     /// Returns `true` if the transition was applied.
+    ///
+    /// Performs best-effort scratch-root rescue+removal **inline**. Prefer
+    /// [`Self::complete_defer_scratch_cleanup`] from the session LocalSet
+    /// (see `doggy_mark_task_done`) so FS work does not freeze cancel.
     pub fn complete(&mut self) -> bool {
+        self.complete_inner(/* defer_fs */ false)
+    }
+
+    /// Like [`Self::complete`], but does **no** filesystem I/O.
+    ///
+    /// Returns `(applied, deferred_fs)`. The caller must drop any
+    /// `goal_tracker` mutex **before** running
+    /// [`DeferredGoalFsCleanup::run`] (ideally via `spawn_blocking`).
+    /// Holding the lock across nested lock helpers or long FS freezes
+    /// the session LocalSet: `completion_phase` stays `"checking"`,
+    /// `shell.cancel.processing` never appears.
+    pub fn complete_defer_scratch_cleanup(
+        &mut self,
+    ) -> (bool, Option<DeferredGoalFsCleanup>) {
+        let job = self.deferred_fs_cleanup_job();
+        let applied = self.complete_inner(/* defer_fs */ true);
+        (applied, if applied { job } else { None })
+    }
+
+    fn complete_inner(&mut self, defer_fs: bool) -> bool {
         if let Some(o) = &mut self.orchestration
             && (o.status == GoalStatus::Active || o.status.is_paused())
         {
@@ -1103,9 +1179,11 @@ impl GoalTracker {
             // recreated/reactivated goal never inherits a stale count or note.
             o.reset_strategist_fields();
             // The achieved ack points the user at the details file, so it
-            // must outlive the scratch-root removal below.
-            self.rescue_classifier_details();
-            self.remove_scratch_root();
+            // must outlive the scratch-root removal (inline or deferred).
+            if !defer_fs {
+                self.rescue_classifier_details();
+                self.remove_scratch_root();
+            }
             self.record_event(GoalEvent::GoalCompleted, None);
             return true;
         }
@@ -1114,7 +1192,23 @@ impl GoalTracker {
 
     /// Mark the goal as budget-limited. Accepts `Active` or any paused variant.
     /// Returns `true` if the transition was applied.
+    ///
+    /// Same scratch-cleanup note as [`Self::complete`]: prefer
+    /// [`Self::budget_limit_defer_scratch_cleanup`] under the session LocalSet.
     pub fn budget_limit(&mut self) -> bool {
+        self.budget_limit_inner(/* defer_fs */ false)
+    }
+
+    /// Like [`Self::budget_limit`], but defers all terminal FS work.
+    pub fn budget_limit_defer_scratch_cleanup(
+        &mut self,
+    ) -> (bool, Option<DeferredGoalFsCleanup>) {
+        let job = self.deferred_fs_cleanup_job();
+        let applied = self.budget_limit_inner(/* defer_fs */ true);
+        (applied, if applied { job } else { None })
+    }
+
+    fn budget_limit_inner(&mut self, defer_fs: bool) -> bool {
         if let Some(o) = &mut self.orchestration
             && (o.status == GoalStatus::Active || o.status.is_paused())
         {
@@ -1135,9 +1229,10 @@ impl GoalTracker {
             o.skeptic_model_assignment.clear();
             o.plan_baseline_file = None;
             o.reset_strategist_fields();
-            // Symmetric with `complete`.
-            self.rescue_classifier_details();
-            self.remove_scratch_root();
+            if !defer_fs {
+                self.rescue_classifier_details();
+                self.remove_scratch_root();
+            }
             self.record_event(GoalEvent::BudgetExceeded, None);
             return true;
         }
@@ -2185,6 +2280,27 @@ mod tests {
         assert_eq!(t.status(), Some(GoalStatus::Complete));
         assert!(t.current_subagent_id().is_none());
         assert!(t.snapshot().unwrap().current_subagent_role.is_none());
+    }
+
+    /// Host path (`doggy_mark_task_done`) must complete state without
+    /// inline FS, then run the returned job after the tracker mutex is
+    /// released.
+    #[test]
+    fn complete_defer_scratch_cleanup_returns_path() {
+        let mut t = make_tracker();
+        activate_tracker(&mut t);
+        let expected = goal_scratch_root(&t.snapshot().unwrap().verifier_id);
+        let _ = std::fs::create_dir_all(&expected);
+
+        let (applied, job) = t.complete_defer_scratch_cleanup();
+        assert!(applied);
+        assert_eq!(t.status(), Some(GoalStatus::Complete));
+        let job = job.expect("deferred FS job");
+        assert_eq!(job.scratch_root, expected);
+        // Deferred: root still on disk until caller runs the job.
+        assert!(expected.exists());
+        let _ = job.run();
+        assert!(!expected.exists());
     }
 
     #[test]

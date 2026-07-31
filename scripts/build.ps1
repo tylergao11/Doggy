@@ -39,53 +39,114 @@ if (-not (Test-Path $exe)) {
 $sizeMb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
 Write-Host "[doggy] OK: $exe ($sizeMb MB)"
 
+function Copy-DoggySafe([string]$src, [string]$destPath) {
+    # Never kill a running doggy — that aborts the Agent that invoked us.
+    #
+    # On Windows a *running* .exe can usually be RENAMED even when it cannot
+    # be overwritten. New launches then pick up the fresh path. Falling back
+    # only to doggy-next.exe left `where doggy` permanently resolving to the
+    # locked old doggy.exe — the "I open a new window and it's still old"
+    # failure mode.
+    $dir = Split-Path $destPath -Parent
+    $base = [System.IO.Path]::GetFileNameWithoutExtension($destPath)
+    $ext = [System.IO.Path]::GetExtension($destPath)
+    $prev = Join-Path $dir ($base + "-prev" + $ext)
+    $next = Join-Path $dir ($base + "-next" + $ext)
+
+    # Fast path: direct overwrite.
+    try {
+        Copy-Item $src $destPath -Force -ErrorAction Stop
+        return $destPath
+    } catch {
+        Write-Host "[doggy] direct copy locked: $destPath — trying rename-then-replace"
+    }
+
+    # Rename the locked image out of the way, then install as doggy.exe.
+    try {
+        if (Test-Path $prev) {
+            Remove-Item $prev -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path $destPath) {
+            Rename-Item -LiteralPath $destPath -NewName ([System.IO.Path]::GetFileName($prev)) -Force -ErrorAction Stop
+        }
+        Copy-Item $src $destPath -Force -ErrorAction Stop
+        Write-Host "[doggy] Installed via rename-replace: $destPath"
+        Write-Host "[doggy]   (running session keeps the old image as $prev until exit)"
+        Write-Host "[doggy]   NEW shells typing 'doggy' will get this binary."
+        return $destPath
+    } catch {
+        Write-Host "[doggy] rename-replace failed: $_"
+    }
+
+    # Last resort: side-by-side name (does NOT fix `where doggy`).
+    Copy-Item $src $next -Force -ErrorAction Stop
+    Write-Host "[doggy] WARN: could not replace $destPath. Wrote: $next"
+    Write-Host "[doggy]        Launch THAT path explicitly — 'doggy' may still be the old file."
+    Write-Host "[doggy]        Do NOT kill the current doggy process from Agent."
+    return $next
+}
+
 function Install-DoggyTo([string]$destDir) {
     if (-not (Test-Path $destDir)) {
         New-Item -ItemType Directory -Path $destDir -Force | Out-Null
     }
 
     $doggy = Join-Path $destDir "doggy.exe"
-    Copy-Item $exe $doggy -Force
-    Write-Host "[doggy] Installed: $doggy"
+    $installed = Copy-DoggySafe $exe $doggy
+    Write-Host "[doggy] Installed: $installed"
 
     # ACP / IDE often looks for "agent" — same binary, Doggy branding.
     $agent = Join-Path $destDir "agent.exe"
-    Copy-Item $exe $agent -Force
+    $agentInstalled = Copy-DoggySafe $exe $agent
+    if ($agentInstalled -ne $agent) {
+        Write-Host "[doggy] agent side-install: $agentInstalled"
+    }
 
     # Never leave a grok.exe process name around.
     foreach ($name in @("grok.exe", "grok.cmd", "grok.exe.old", "grok.exe.doggy-bak")) {
         $p = Join-Path $destDir $name
         if (Test-Path $p) {
-            Remove-Item $p -Force
-            Write-Host "[doggy] Removed: $p"
+            try {
+                Remove-Item $p -Force -ErrorAction Stop
+                Write-Host "[doggy] Removed: $p"
+            } catch {
+                Write-Host "[doggy] WARN: could not remove $p (in use): $_"
+            }
         }
     }
 }
 
 if (-not $NoInstall) {
+    # Install to BOTH locations. Users historically had ~/.Doggy/bin first on
+    # PATH while only ~/.local/bin got updates → old deadlock binary kept
+    # winning (Checking forever, cancel.processing never logged).
     Install-DoggyTo (Join-Path $env:USERPROFILE ".local\bin")
     Install-DoggyTo (Join-Path $env:USERPROFILE ".Doggy\bin")
 
-    # Ensure User PATH has ~/.local/bin and ~/.Doggy/bin (not ~/.grok/bin).
+    # Ensure User PATH has ~/.Doggy/bin and ~/.local/bin (not ~/.grok/bin),
+    # and force-reorder so both stay near the front even if they already
+    # existed later in PATH (Insert(0) alone is a no-op when present).
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if (-not $userPath) { $userPath = "" }
+    $localBin = Join-Path $env:USERPROFILE ".local\bin"
+    $doggyBin = Join-Path $env:USERPROFILE ".Doggy\bin"
     $parts = [System.Collections.Generic.List[string]]::new()
     foreach ($p in ($userPath -split ';' | Where-Object { $_ -and $_.Trim() })) {
         if ($p -match '[\\/]\.grok[\\/]bin\\?$') {
             Write-Host "[doggy] Dropping PATH entry: $p"
             continue
         }
+        # Strip so we can re-insert at front in a fixed order.
+        if ($p -ieq $localBin -or $p -ieq $doggyBin) { continue }
         if (-not $parts.Contains($p)) { $parts.Add($p) }
     }
-    foreach ($add in @(
-        (Join-Path $env:USERPROFILE ".local\bin"),
-        (Join-Path $env:USERPROFILE ".Doggy\bin")
-    )) {
-        if (-not ($parts | Where-Object { $_ -ieq $add })) {
-            $parts.Insert(0, $add)
-            Write-Host "[doggy] PATH += $add"
-        }
-    }
+    # Prefer ~/.local/bin first: install always succeeds there even when
+    # ~/.Doggy/bin/doggy.exe is locked by a running session (which then only
+    # gets doggy-next.exe). Putting .Doggy first caused weeks of "fixed in
+    # source but still broken" — where doggy kept resolving to the old lock.
+    $parts.Insert(0, $doggyBin)
+    $parts.Insert(0, $localBin)
+    Write-Host "[doggy] PATH front: $localBin ; $doggyBin"
     [Environment]::SetEnvironmentVariable("Path", ($parts -join ';'), "User")
 }
 

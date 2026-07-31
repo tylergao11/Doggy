@@ -1915,15 +1915,32 @@ impl SessionActor {
         }
         // `budget_limit` records the `BudgetExceeded` history entry itself
         // (via the tracker chokepoint), so we don't append it here.
-        self.goal_tracker.lock().budget_limit();
+        // Defer rescue + scratch removal until after the mutex is released
+        // (same LocalSet-freeze concern as `doggy_mark_task_done`).
+        let deferred_fs = {
+            let mut tracker = self.goal_tracker.lock();
+            let (applied, job) = tracker.budget_limit_defer_scratch_cleanup();
+            if applied {
+                let notify = self.goal_notify_sender();
+                notify.emit_goal_updated(&mut tracker, tokens_used, finished_marginal);
+            }
+            job
+        };
+        if let Some(job) = deferred_fs {
+            // Same fire-and-forget policy as `doggy_mark_task_done`: never
+            // await blocking FS on the session LocalSet.
+            if let Some(src) = job.details_src.as_ref()
+                && let Some(name) = src.file_name()
+            {
+                let dest = job.goal_dir.join(name);
+                self.goal_tracker.lock().apply_rescued_details_path(dest);
+            }
+            tokio::task::spawn_blocking(move || {
+                let _ = job.run();
+            });
+        }
         // Deferred completions must not fire against a now-budget-limited goal.
         self.clear_pending_classifier_completions();
-        let notify = self.goal_notify_sender();
-        notify.emit_goal_updated(
-            &mut self.goal_tracker.lock(),
-            tokens_used,
-            finished_marginal,
-        );
         self.send_slash_command_output(&format!(
             "Goal token budget reached ({tokens_used} of {budget} tokens) — goal \
              stopped. Use /goal clear, then /goal <objective> to start a new one."
