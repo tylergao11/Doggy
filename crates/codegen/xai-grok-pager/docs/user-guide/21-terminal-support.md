@@ -109,7 +109,7 @@ Apple Terminal ignores OSC 52, so copying from a Grok session over SSH can't rea
 
 `grok wrap` also protects your local terminal from dirty disconnects: if the wrapped command dies while a remote TUI has mouse reporting, the alternate screen, or similar modes enabled (for example the SSH connection drops mid-session), wrap resets those modes on exit instead of leaving the terminal spraying mouse escape codes.
 
-When Grok starts inside an SSH session that isn't already running under `grok wrap`, a one-time contextual tip above the prompt recommends `grok wrap ssh <host>` (it stops appearing on its own once you launch through wrap). To turn it off, set `ssh_wrap = false` under `[ui.contextual_hints]` in `~/.grok/config.toml`, or use `/settings` → **Show contextual hints** → **SSH wrap**.
+When Grok starts inside an SSH session that isn't already running under `grok wrap`, a one-time contextual tip above the prompt recommends `grok wrap ssh <host>` (it stops appearing on its own once you launch through wrap). To turn it off, set `ssh_wrap = false` under `[ui.contextual_hints]` in `~/.Doggy/config.toml`, or use `/settings` → **Show contextual hints** → **SSH wrap**.
 
 > **Warning**: `grok wrap` is **experimental** and may misbehave in some setups.
 
@@ -131,7 +131,7 @@ This setting is off by default for security reasons. Without it, OSC 52 writes f
 
 **Fix**:
 - In Zellij or control mode, Grok intentionally runs inline (no alt screen).
-- Set `[terminal] alt_screen = "always"` in `~/.grok/pager.toml` to force fullscreen.
+- Set `[terminal] alt_screen = "always"` in `~/.Doggy/pager.toml` to force fullscreen.
 - Use the CLI flag `--no-alt-screen` to disable alt-screen mode entirely (useful for debugging or when the alternate screen causes issues in your terminal).
 
 ### Problem: Zellij keybindings interfere with Grok (Ctrl+g, Ctrl+o, etc.)
