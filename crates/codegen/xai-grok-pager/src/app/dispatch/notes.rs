@@ -189,6 +189,34 @@ pub(super) fn dispatch_save_remember_note_from_modal(app: &mut AppView) -> Vec<E
     }]
 }
 
+/// List the memory edits reflection staged for approval.
+pub(super) fn dispatch_show_memory_pending(app: &mut AppView) -> Vec<Effect> {
+    let Some((id, cwd)) = active_agent_cwd(app) else {
+        return vec![];
+    };
+    vec![Effect::LoadMemoryPending { agent_id: id, cwd }]
+}
+
+/// Apply or drop the whole staged-memory queue.
+pub(super) fn dispatch_resolve_memory_pending(app: &mut AppView, approve: bool) -> Vec<Effect> {
+    let Some((id, cwd)) = active_agent_cwd(app) else {
+        return vec![];
+    };
+    vec![Effect::ResolveMemoryPending {
+        agent_id: id,
+        cwd,
+        approve,
+    }]
+}
+
+fn active_agent_cwd(app: &AppView) -> Option<(AgentId, std::path::PathBuf)> {
+    let ActiveView::Agent(id) = app.active_view else {
+        return None;
+    };
+    let agent = app.agents.get(&id)?;
+    Some((id, agent.session.cwd.clone()))
+}
+
 /// Extract session context for the LLM memory rewrite request.
 ///
 /// Walks scrollback in reverse, collecting:
@@ -436,6 +464,49 @@ pub(super) fn handle_memory_note_saved(
             }
         }
     }
+    vec![]
+}
+
+pub(super) fn handle_memory_pending_loaded(
+    app: &mut AppView,
+    agent_id: AgentId,
+    lines: Vec<String>,
+    count: usize,
+) -> Vec<Effect> {
+    let Some(agent) = app.agents.get_mut(&agent_id) else {
+        return vec![];
+    };
+    agent.memory_pending_count = count;
+    let body = if lines.is_empty() {
+        "No memory edits are waiting for approval.".to_owned()
+    } else {
+        format!(
+            "{} memory edit(s) awaiting approval:\n{}\n\n/memory approve to apply, /memory discard to drop.",
+            count,
+            lines.join("\n"),
+        )
+    };
+    agent
+        .scrollback
+        .push_block(RenderBlock::system(body));
+    vec![]
+}
+
+pub(super) fn handle_memory_pending_resolved(
+    app: &mut AppView,
+    agent_id: AgentId,
+    result: Result<String, String>,
+    count: usize,
+) -> Vec<Effect> {
+    let Some(agent) = app.agents.get_mut(&agent_id) else {
+        return vec![];
+    };
+    agent.memory_pending_count = count;
+    let message = match result {
+        Ok(summary) => summary,
+        Err(error) => format!("Couldn't resolve staged memory edits: {error}"),
+    };
+    agent.scrollback.push_block(RenderBlock::system(message));
     vec![]
 }
 

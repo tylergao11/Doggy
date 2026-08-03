@@ -256,7 +256,8 @@ pub(super) async fn run_session(
             path_str.clone(), }). await; } } } else { tracing::debug!(target :
             xai_grok_telemetry::memory_log::TARGET,
             "MEMORY_SUBAGENT_SKIP: skipping on_session_end for subagent session"); }
-            session.maybe_run_dream(). await; let telem = session.memory
+            session.maybe_run_reflection(). await; session.maybe_run_dream(). await; let
+            telem = session.memory
             .telemetry_snapshot(); session.emit_memory_session_summary(& telem,
             total_chunks_at_end, session_end_result); if let Some(notification) =
             replay_buffer.flush() { session.emit_buffered(notification). await; } { let
@@ -696,7 +697,9 @@ pub(super) async fn run_session(
             .send_available_commands_update(). await; } SessionCommand::ReloadSkills => {
             let s = session.clone(); tokio::task::spawn_local(async move { s
             .reload_skills_from_disk(). await; }); }
-            SessionCommand::DispatchSessionStartHook { source } => { let envelope =
+            SessionCommand::DispatchSessionStartHook { source } => { { let s = session
+            .clone(); tokio::task::spawn_local(async move { s
+            .report_pending_approvals_at_start(). await; }); } let envelope =
             session.fire_hook(xai_grok_hooks::event::HookEventName::SessionStart, None,
             xai_grok_hooks::event::HookPayload::SessionStart { source, model_id : None,
             agent_type : None, },); if let Some(registry) = session.hook_registry
@@ -819,7 +822,8 @@ pub(super) async fn run_session(
             path_str.clone(), }). await; } } } else { tracing::debug!(target :
             xai_grok_telemetry::memory_log::TARGET,
             "MEMORY_SUBAGENT_SKIP: skipping on_session_end for subagent session"); }
-            session.maybe_run_dream(). await; let telem = session.memory
+            session.maybe_run_reflection(). await; session.maybe_run_dream(). await; let
+            telem = session.memory
             .telemetry_snapshot(); session.emit_memory_session_summary(& telem,
             total_chunks_at_end, session_end_result); if let Some(cancel) = & session
             .sync_loop_cancel { cancel.cancel(); } session.feedback_manager

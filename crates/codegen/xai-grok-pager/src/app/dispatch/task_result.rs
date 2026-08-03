@@ -798,6 +798,18 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         TaskResult::MemoryNoteSaved { agent_id, result } => {
             handle_memory_note_saved(app, agent_id, result)
         }
+        TaskResult::MemoryPendingLoaded {
+            agent_id,
+            lines,
+            count,
+        } => crate::app::dispatch::notes::handle_memory_pending_loaded(app, agent_id, lines, count),
+        TaskResult::MemoryPendingResolved {
+            agent_id,
+            result,
+            count,
+        } => {
+            crate::app::dispatch::notes::handle_memory_pending_resolved(app, agent_id, result, count)
+        }
         TaskResult::MemoryNoteRewritten {
             agent_id,
             result,

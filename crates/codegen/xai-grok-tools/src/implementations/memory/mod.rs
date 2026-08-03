@@ -12,7 +12,9 @@ pub mod write_tool;
 pub use get_tool::MemoryGetImpl;
 pub use search_tool::MemorySearchImpl;
 pub use write_tool::{
-    assemble_memory_digest, MemoryWriteImpl, DEFAULT_CURATED_CHAR_LIMIT, MEMORY_DIGEST_BUDGET,
+    apply_action, assemble_memory_digest, content_safety_error, injection_hazard, join_entries,
+    parse_entries, ApplyResult, MemoryWriteImpl, DEFAULT_CURATED_CHAR_LIMIT, MAX_ENTRY_CHARS,
+    MEMORY_DIGEST_BUDGET,
 };
 
 /// Registered name of the `memory_search` tool.

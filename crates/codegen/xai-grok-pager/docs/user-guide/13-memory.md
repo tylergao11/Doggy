@@ -81,13 +81,21 @@ You can also toggle from inside the `/memory` modal by pressing `t`.
 
 ## How Memory Is Stored
 
-Memory is stored as Markdown files under `~/.grok/memory/`:
+Memory is stored as Markdown files under `~/.Doggy/memory/`:
 
 | Location | Scope | Description |
 |----------|-------|-------------|
-| `~/.grok/memory/MEMORY.md` | Global | Facts that apply across all your projects |
-| `~/.grok/memory/<project-slug>-<hash8>/MEMORY.md` | Workspace | Project-specific conventions and context |
-| `~/.grok/memory/<project-slug>-<hash8>/sessions/` | Sessions | Per-session summaries and logs |
+| `~/.Doggy/memory/USER.md` | User | Who you are and how you want to be worked with |
+| `~/.Doggy/memory/MEMORY.md` | Global | Technical facts that apply across all your projects |
+| `~/.Doggy/memory/<project-slug>-<hash8>/MEMORY.md` | Workspace | Project-specific conventions and context |
+| `~/.Doggy/memory/<project-slug>-<hash8>/consolidated.md` | Workspace | Long-form dream output, reached through search |
+| `~/.Doggy/memory/<project-slug>-<hash8>/sessions/` | Sessions | Per-session summaries and logs |
+
+The three curated files (`USER.md`, global `MEMORY.md`, workspace `MEMORY.md`) are
+split by how fast they change, not by topic. Each is capacity-capped and injected
+into the system prompt at session start, in the order user → workspace → global —
+so when the budget runs short, cross-project facts drop out before your profile
+does. `consolidated.md` is unbounded and never injected wholesale.
 
 Grok suffixes each workspace directory with a short hash of the repository's identity. The identity is the `origin` remote in `org/repo` form when the directory is a Git repository with an `origin` remote, or the directory path otherwise. Because clones and worktrees of the same repository share an `origin` remote, they also share one memory directory.
 
@@ -183,6 +191,7 @@ The `/memory` command opens a modal showing all memory files:
 ```
 
 Files are grouped by scope:
+- **User** -- your profile (`USER.md`).
 - **Global** -- cross-project memory (`MEMORY.md`).
 - **Workspace** -- project-specific memory (`MEMORY.md`).
 - **Sessions** -- per-session summaries, in reverse chronological order.
@@ -244,6 +253,48 @@ min_sessions = 3   # Minimum sessions since the last consolidation
 # check_interval_secs is unset by default, so Dream runs only at session end.
 # Set it to a positive number of seconds to also check on a periodic interval.
 ```
+
+---
+
+## Self-Reflection
+
+When a session ends, Grok looks back over it and decides whether anything is worth
+remembering. Where Dream reorganizes what is already stored, reflection asks a
+narrower question: did this session teach a durable fact that a future session
+would otherwise have to rediscover? Most sessions produce no change.
+
+Reflection edits the curated files through the same add / replace / remove
+operations the `memory_write` tool uses, so the capacity caps and safety checks
+apply to it too. It prefers replacing a near-duplicate over accumulating one.
+
+```toml
+[memory.reflection]
+enabled = true                 # Reflect at session end (default: true)
+apply = "auto"                 # "auto" applies edits; "staged" queues them for approval
+max_ops = 4                    # Most edits accepted from one reflection
+min_real_user_messages = 3     # Skip sessions shorter than this
+timeout_secs = 120             # Give up if the model does not answer in time
+```
+
+### Reviewing Staged Edits
+
+Under `apply = "staged"`, reflection writes its proposals to a queue instead of to
+memory, and nothing is applied until you say so. Nothing blocks on you: the queue
+is a file, the session ends normally, and the only signal is a `◆ memory: N` badge
+in the status bar showing how many edits are waiting.
+
+Review them whenever you like:
+
+```
+/memory pending    # List the queued edits
+/memory approve    # Apply all of them
+/memory discard    # Drop all of them
+```
+
+Approving replays each edit against memory as it stands now, so an edit that has
+since become invalid — its target entry was rewritten by hand, or the file is at
+capacity — is reported as skipped rather than forced through. The queue is cleared
+either way.
 
 ---
 
@@ -336,14 +387,19 @@ grok memory clear --workspace
 # Clear the global MEMORY.md
 grok memory clear --global
 
-# Clear both workspace and global memory
+# Clear the user profile (USER.md)
+grok memory clear --user
+
+# Clear workspace, global, and user memory
 grok memory clear --all
 
 # Skip the confirmation prompt (-y is the short form)
 grok memory clear --yes
 ```
 
-To edit memory from the shell, open the files in your editor directly -- for example, `$EDITOR ~/.grok/memory/MEMORY.md`.
+Every scope lists the exact files it will delete and asks for confirmation first. Clearing `--global` leaves `USER.md` alone: the profile is yours to write, so it goes only when you ask for it by name or with `--all`.
+
+To edit memory from the shell, open the files in your editor directly -- for example, `$EDITOR ~/.Doggy/memory/MEMORY.md`.
 
 ---
 

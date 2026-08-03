@@ -8,6 +8,75 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Default character limit for each curated MEMORY.md (global and workspace
+/// counted independently). Used by the `memory_write` tool capacity gate.
+pub const DEFAULT_CURATED_CHAR_LIMIT: u64 = 2200;
+
+/// Curated MEMORY.md write capacity (`[memory]` top-level `curated_char_limit`).
+///
+/// Hard limit applies only to the `memory_write` tool path — dream /
+/// `write_long_term` is unlimited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct MemoryCuratedConfig {
+    /// Max characters per curated MEMORY.md file (global / workspace separate).
+    pub curated_char_limit: u64,
+}
+
+impl Default for MemoryCuratedConfig {
+    fn default() -> Self {
+        Self {
+            curated_char_limit: DEFAULT_CURATED_CHAR_LIMIT,
+        }
+    }
+}
+
+/// Post-session reflection configuration (`[memory.reflection]`).
+///
+/// After a session ends, one model call reviews the conversation and proposes
+/// curated `MEMORY.md` edits. Runs alongside dream, which consolidates session
+/// logs into `consolidated.md` instead.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct MemoryReflectionConfig {
+    /// Whether post-session reflection is enabled.
+    pub enabled: bool,
+    /// Model for the reflection call. `None` = flush model, else session model.
+    pub model: Option<String>,
+    /// Max operations accepted from one reflection response.
+    pub max_ops: usize,
+    /// Minimum real user messages before a session is worth reflecting on.
+    pub min_real_user_messages: usize,
+    /// Timeout for the reflection model call.
+    pub timeout_secs: u64,
+    /// `"auto"` writes accepted operations immediately; `"staged"` records
+    /// them to `reflection_pending.jsonl` for later review instead.
+    pub apply: String,
+}
+
+impl Default for MemoryReflectionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            model: None,
+            max_ops: 4,
+            min_real_user_messages: 3,
+            timeout_secs: 120,
+            apply: "auto".to_string(),
+        }
+    }
+}
+
+impl MemoryReflectionConfig {
+    /// Whether accepted operations are written to disk immediately.
+    ///
+    /// Anything other than `"staged"` means auto-apply, so a typo fails to
+    /// the documented default rather than silently disabling persistence.
+    pub fn is_auto_apply(&self) -> bool {
+        !self.apply.eq_ignore_ascii_case("staged")
+    }
+}
+
 /// Index and chunking configuration (`[memory.index]`).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
@@ -409,6 +478,10 @@ mod tests {
 
     #[test]
     fn sub_config_defaults_match() {
+        assert_eq!(
+            MemoryCuratedConfig::default().curated_char_limit,
+            DEFAULT_CURATED_CHAR_LIMIT
+        );
         assert_eq!(MemoryIndexConfig::default().max_chunk_chars, 1600);
         assert_eq!(MemoryEmbeddingConfig::default().dimensions, 1024);
         let s = MemorySearchConfig::default();
@@ -417,8 +490,20 @@ mod tests {
         assert!(s.temporal_decay.enabled);
         assert!(!s.mmr.enabled);
         assert!(MemorySessionConfig::default().save_on_end);
+        let r = MemoryReflectionConfig::default();
+        assert!(r.enabled);
+        assert_eq!(r.max_ops, 4);
+        assert!(r.is_auto_apply());
         assert_eq!(MemoryGcConfig::default().max_age_days, 30);
         assert_eq!(PruningConfig::default().keep_last_n_turns, 3);
+    }
+
+    #[test]
+    fn reflection_apply_mode_defaults_to_auto() {
+        let staged: MemoryReflectionConfig = serde_json::from_str(r#"{"apply":"staged"}"#).unwrap();
+        assert!(!staged.is_auto_apply());
+        let typo: MemoryReflectionConfig = serde_json::from_str(r#"{"apply":"stagged"}"#).unwrap();
+        assert!(typo.is_auto_apply());
     }
 
     #[test]

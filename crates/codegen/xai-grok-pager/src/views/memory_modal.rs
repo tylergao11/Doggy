@@ -301,6 +301,7 @@ pub fn build_entries(
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
+    let mut user = Vec::new();
     let mut global = Vec::new();
     let mut workspace = Vec::new();
     let mut session = Vec::new();
@@ -310,7 +311,12 @@ pub fn build_entries(
         let size = format_size(f.size_bytes);
         let modified = format_modified(f.modified_epoch_secs, now_secs);
         let meta_display = format!("{size} \u{00B7} {modified}");
+        // `USER.md` reports source `"global"` because it lives in the global
+        // directory and shares its evergreen search scoring. Split on the
+        // filename here so the list still shows it as its own layer — this is
+        // presentation only; changing `classify_source` would change scoring.
         let bucket = match f.source.as_str() {
+            "global" if label == "USER.md" => &mut user,
             "global" => &mut global,
             "workspace" => &mut workspace,
             _ => &mut session,
@@ -340,6 +346,7 @@ pub fn build_entries(
             entries.extend(items);
         }
     };
+    push_section("User", user);
     push_section("Global", global);
     push_section("Workspace", workspace);
     push_section("Sessions", session);
@@ -1199,6 +1206,37 @@ mod tests {
         assert_eq!(entries[2].label, "Workspace");
         assert!(entries[4].is_header);
         assert_eq!(entries[4].label, "Sessions");
+    }
+
+    /// `USER.md` arrives tagged `"global"` but is its own layer to the user, so
+    /// it gets its own section and leads the list.
+    #[test]
+    fn build_entries_splits_user_profile_out_of_global() {
+        use xai_grok_shell::extensions::notification::MemoryFileInfo;
+
+        let files = vec![
+            MemoryFileInfo {
+                path: "/global/MEMORY.md".into(),
+                source: "global".into(),
+                size_bytes: 100,
+                modified_epoch_secs: Some(1_700_000_000),
+            },
+            MemoryFileInfo {
+                path: "/global/USER.md".into(),
+                source: "global".into(),
+                size_bytes: 80,
+                modified_epoch_secs: Some(1_700_000_000),
+            },
+        ];
+
+        let entries = build_entries(files);
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].label, "User");
+        assert!(entries[0].is_header);
+        assert_eq!(entries[1].label, "USER.md");
+        assert_eq!(entries[2].label, "Global");
+        assert!(entries[2].is_header);
+        assert_eq!(entries[3].label, "MEMORY.md");
     }
 
     #[test]

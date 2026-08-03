@@ -161,7 +161,10 @@ pub struct DreamMessage {
 pub(crate) fn is_scaffold_template(content: &str) -> bool {
     const SCAFFOLD_MAX_LEN: usize = 500;
     const MARKERS: &[&str] = &[
+        // First marker predates the dream/curated file split; keep it so
+        // scaffolds written by older versions still classify correctly.
         "Auto-populated by dream consolidation",
+        "Curated project notes. Edit freely.",
         "Add project-specific knowledge here",
         "Add any cross-project preferences here",
     ];
@@ -265,7 +268,7 @@ const MAX_DREAM_CHARS: usize = 16_000;
 /// - Response lacks markdown heading structure
 ///
 /// Dream output that passes the quality check below contains markdown
-/// headers (`# ` or `## `). Since `write_long_term` writes content
+/// headers (`# ` or `## `). Since `write_consolidated` writes content
 /// directly without normalization, dream's markdown structure is
 /// preserved as-is.
 ///
@@ -387,7 +390,7 @@ fn clean_processed_sessions(sessions_dir: &Path, stems: &[String]) -> Vec<String
 /// Steps:
 /// 1. Acquire lock
 /// 2. Process response
-/// 3. Overwrite workspace MEMORY.md
+/// 3. Overwrite workspace consolidated.md
 /// 4. Clean up processed session files (on success only)
 /// 5. On success: leave lock mtime (records consolidation)
 /// 6. On failure: rollback lock
@@ -436,11 +439,11 @@ pub fn execute_dream(
     };
 
     let chars_written = content.chars().count();
-    if let Err(e) = storage.write_long_term(super::storage::MemoryScope::Workspace, &content) {
+    if let Err(e) = storage.write_consolidated(&content) {
         let _ = lock.rollback(prior);
         tracing::warn!(target: LOG, error = %e, "DREAM_EXECUTE: write failed, lock rolled back");
         return DreamResult {
-            status: DreamStatus::Failed(format!("failed to write MEMORY.md: {e}")),
+            status: DreamStatus::Failed(format!("failed to write consolidated.md: {e}")),
             sessions_eligible,
             cleaned_stems: Vec::new(),
         };
@@ -857,7 +860,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_dream_valid_response_writes_memory() {
+    fn execute_dream_valid_response_writes_consolidated() {
         let dir = TempDir::new().unwrap();
         let lock = DreamLock::new(dir.path());
         let (storage, ws) = test_storage(&dir);
@@ -872,9 +875,11 @@ mod tests {
         assert_eq!(result.sessions_eligible, 5);
         assert_eq!(result.cleaned_stems.len(), 0);
 
-        let memory = fs::read_to_string(ws.join("MEMORY.md")).unwrap();
-        assert!(memory.contains("We chose Rust."));
-        assert!(memory.contains("Event-driven."));
+        let consolidated = fs::read_to_string(ws.join("consolidated.md")).unwrap();
+        assert!(consolidated.contains("We chose Rust."));
+        assert!(consolidated.contains("Event-driven."));
+        // Curated MEMORY.md is owned by memory_write / reflection, not dream.
+        assert!(!ws.join("MEMORY.md").exists());
     }
 
     #[test]
@@ -943,7 +948,7 @@ mod tests {
 
         match &result.status {
             DreamStatus::Failed(reason) => {
-                assert!(reason.contains("MEMORY.md"), "reason: {reason}");
+                assert!(reason.contains("consolidated.md"), "reason: {reason}");
             }
             other => panic!("expected Failed, got {other:?}"),
         }
@@ -958,14 +963,16 @@ mod tests {
     }
 
     #[test]
-    fn execute_dream_overwrites_existing_memory() {
+    fn execute_dream_overwrites_existing_consolidated() {
         let dir = TempDir::new().unwrap();
         let (storage, ws) = test_storage(&dir);
         let sdir = empty_sessions_dir(&dir);
 
-        // Pre-populate MEMORY.md
+        // Pre-populate both files: dream replaces consolidated.md and must
+        // leave the curated MEMORY.md untouched.
         fs::create_dir_all(&ws).unwrap();
-        fs::write(ws.join("MEMORY.md"), "## Existing\n\nOld content.").unwrap();
+        fs::write(ws.join("consolidated.md"), "## Existing\n\nOld content.").unwrap();
+        fs::write(ws.join("MEMORY.md"), "curated entry").unwrap();
 
         let lock = DreamLock::new(dir.path());
         let response = "## New Topic\n\nFresh insight.";
@@ -973,10 +980,14 @@ mod tests {
 
         assert!(matches!(result.status, DreamStatus::Completed { .. }));
 
-        let memory = fs::read_to_string(ws.join("MEMORY.md")).unwrap();
-        // write_long_term overwrites: old content is replaced
-        assert!(!memory.contains("Old content."));
-        assert_eq!(memory.trim(), response);
+        let consolidated = fs::read_to_string(ws.join("consolidated.md")).unwrap();
+        // write_consolidated overwrites: old content is replaced
+        assert!(!consolidated.contains("Old content."));
+        assert_eq!(consolidated.trim(), response);
+        assert_eq!(
+            fs::read_to_string(ws.join("MEMORY.md")).unwrap(),
+            "curated entry"
+        );
     }
 
     // -------------------------------------------------------------------

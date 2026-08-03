@@ -3302,6 +3302,67 @@ pub(crate) fn execute(
                     }
                 });
         }
+        Effect::LoadMemoryPending { agent_id, cwd } => {
+            tasks
+                .spawn(async move {
+                    let (lines, count) = tokio::task::spawn_blocking(move || {
+                            use xai_grok_shell::session::memory::{MemoryStorage, pending};
+                            let storage = MemoryStorage::new(&cwd, None);
+                            let entries = pending::read(&storage.pending_file());
+                            let lines = entries
+                                .iter()
+                                .enumerate()
+                                .map(|(i, entry)| pending::describe(i + 1, entry))
+                                .collect::<Vec<_>>();
+                            (lines, entries.len())
+                        })
+                        .await
+                        .unwrap_or_default();
+                    TaskResult::MemoryPendingLoaded {
+                        agent_id,
+                        lines,
+                        count,
+                    }
+                });
+        }
+        Effect::ResolveMemoryPending { agent_id, cwd, approve } => {
+            tasks
+                .spawn(async move {
+                    let (result, count) = tokio::task::spawn_blocking(move || {
+                            use xai_grok_shell::session::memory::{MemoryStorage, pending};
+                            let storage = MemoryStorage::new(&cwd, None);
+                            let resolved = if approve {
+                                // The pager does not carry the resolved memory
+                                // config, so approval budgets against the
+                                // shipped default rather than a user override.
+                                pending::approve_all(
+                                    &storage,
+                                    xai_grok_shell::config::DEFAULT_CURATED_CHAR_LIMIT,
+                                )
+                            } else {
+                                pending::discard_all(&storage)
+                            };
+                            match resolved {
+                                Ok(outcome) => {
+                                    (Ok(outcome.summary(approve)), outcome.remaining)
+                                }
+                                Err(e) => {
+                                    (
+                                        Err(e.to_string()),
+                                        pending::count(&storage.pending_file()),
+                                    )
+                                }
+                            }
+                        })
+                        .await
+                        .unwrap_or_else(|e| (Err(format!("task join error: {e}")), 0));
+                    TaskResult::MemoryPendingResolved {
+                        agent_id,
+                        result,
+                        count,
+                    }
+                });
+        }
         Effect::SendBtw { agent_id, session_id, question } => {
             let tx = acp_tx.clone();
             tasks

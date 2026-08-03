@@ -57,7 +57,9 @@ pub struct MemoryGetOutput {
 pub struct MemoryWriteInput {
     /// Mutation action: `"add"`, `"replace"`, or `"remove"`.
     pub action: String,
-    /// Target scope: `"workspace"` (default) or `"global"`.
+    /// Target layer: `"workspace"` (default) for facts about this project,
+    /// `"global"` for technical facts that hold across projects, or `"user"`
+    /// for who the user is and how they want to be worked with.
     #[serde(default)]
     pub scope: Option<String>,
     /// Entry body for `add` / `replace`. Required for those actions.

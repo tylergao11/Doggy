@@ -33,9 +33,9 @@ use super::modes::{
     set_permission_mode, set_plan_mode, set_yolo_mode,
 };
 use super::notes::{
-    dispatch_enter_feedback_mode, dispatch_enter_remember_mode,
+    dispatch_enter_feedback_mode, dispatch_enter_remember_mode, dispatch_resolve_memory_pending,
     dispatch_save_remember_note_from_modal, dispatch_send_btw, dispatch_send_feedback,
-    dispatch_send_recap, dispatch_send_remember_note,
+    dispatch_send_recap, dispatch_send_remember_note, dispatch_show_memory_pending,
 };
 use super::permissions::{
     dispatch_permission_cancel, dispatch_permission_followup, dispatch_permission_select,
@@ -913,6 +913,8 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::EnterRememberMode => dispatch_enter_remember_mode(app),
         Action::SendRememberNote(text) => dispatch_send_remember_note(app, text),
         Action::SaveRememberNoteFromModal => dispatch_save_remember_note_from_modal(app),
+        Action::ShowMemoryPending => dispatch_show_memory_pending(app),
+        Action::ResolveMemoryPending { approve } => dispatch_resolve_memory_pending(app, approve),
         Action::SendBtw(question) => dispatch_send_btw(app, question),
         Action::SendRecap { auto } => dispatch_send_recap(app, auto),
         Action::ShowPrivacyInfo => dispatch_show_privacy_info(app),

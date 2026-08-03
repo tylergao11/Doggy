@@ -1321,6 +1321,25 @@ impl AgentView {
                 Line::from(Span::styled(format!("+{queue_len}"), queue_style)),
             );
         }
+        // Staged memory edits: passive count only. Deliberately not clickable
+        // and not bound to a key — a fully automatic run must never pause on
+        // it, so noticing the queue is the whole job and `/memory` does the
+        // rest. Absent under the default auto-apply mode.
+        if self.memory_pending_count > 0 {
+            status.push(
+                "memory_pending",
+                Line::from(vec![
+                    Span::styled(
+                        crate::glyphs::diamond_filled().to_string(),
+                        Style::default().fg(theme.warning).bg(theme.bg_base),
+                    ),
+                    Span::styled(
+                        format!(" memory: {}", self.memory_pending_count),
+                        Style::default().fg(theme.gray).bg(theme.bg_base),
+                    ),
+                ]),
+            );
+        }
         let counts = self.todo.counts();
         if let Some(badge_spans) = agent::render_todo_badge_spans(
             &counts,

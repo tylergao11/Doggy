@@ -668,6 +668,13 @@ pub enum Action {
     SendRememberNote(String),
     /// Save the currently displayed remember note from the review modal.
     SaveRememberNoteFromModal,
+    /// List the memory edits post-session reflection staged for approval.
+    ShowMemoryPending,
+    /// Resolve the whole staged-memory queue: apply it to `MEMORY.md`
+    /// (`approve`) or drop it.
+    ResolveMemoryPending {
+        approve: bool,
+    },
     /// Send a /btw side question (bypasses queue, works while agent is busy).
     SendBtw(String),
     /// Request a session recap ("where was I" summary). `auto` is `true` for
@@ -1808,6 +1815,17 @@ pub enum Effect {
         text: String,
         cwd: std::path::PathBuf,
     },
+    /// Read the staged-memory queue for a workspace (async file read).
+    LoadMemoryPending {
+        agent_id: AgentId,
+        cwd: std::path::PathBuf,
+    },
+    /// Apply or drop the whole staged-memory queue (async file writes).
+    ResolveMemoryPending {
+        agent_id: AgentId,
+        cwd: std::path::PathBuf,
+        approve: bool,
+    },
     /// Send raw note to x.ai/memory/rewrite for LLM-powered reformatting.
     /// On success, the rewritten text populates the prompt for inline review.
     /// On failure, falls back to showing the raw text for review.
@@ -2474,6 +2492,20 @@ pub enum TaskResult {
     MemoryNoteSaved {
         agent_id: AgentId,
         result: Result<(), String>,
+    },
+    /// Staged-memory queue read back for review. `lines` is already
+    /// human-readable — formatting happens off the UI thread with the file.
+    MemoryPendingLoaded {
+        agent_id: AgentId,
+        lines: Vec<String>,
+        count: usize,
+    },
+    /// Staged-memory queue applied or dropped. `Ok` carries the summary to
+    /// show; `count` is what remains queued afterwards.
+    MemoryPendingResolved {
+        agent_id: AgentId,
+        result: Result<String, String>,
+        count: usize,
     },
     /// LLM-rewritten memory note ready for inline review.
     /// `Ok(text)` = rewritten markdown; `Err(error)` = rewrite failed.

@@ -34,7 +34,8 @@ pub(super) fn build_initial_injection_backend_params(
 }
 
 impl SessionActor {
-    /// Re-register `memory_search` and `memory_get` tools on the tool bridge.
+    /// Re-register the `memory_search`, `memory_get`, and `memory_write` tools
+    /// on the tool bridge.
     ///
     /// Used when re-enabling memory mid-session (`/memory on`). The tools are
     /// registered via the dynamic `register_mcp_tools` path which puts them in
@@ -45,7 +46,7 @@ impl SessionActor {
         bridge: &xai_grok_tools::bridge::ToolBridge,
     ) -> Result<(), String> {
         use xai_grok_tools::implementations::memory::{
-            MEMORY_GET_TOOL_NAME, MEMORY_SEARCH_TOOL_NAME,
+            MEMORY_GET_TOOL_NAME, MEMORY_SEARCH_TOOL_NAME, MEMORY_WRITE_TOOL_NAME,
         };
 
         bridge
@@ -64,6 +65,14 @@ impl SessionActor {
             )
             .await
             .map_err(|e| format!("failed to register memory_get: {e}"))?;
+        bridge
+            .register_mcp_tools(
+                MEMORY_WRITE_TOOL_NAME.to_owned(),
+                xai_grok_tools::implementations::memory::write_tool::MemoryWriteImpl,
+                None,
+            )
+            .await
+            .map_err(|e| format!("failed to register memory_write: {e}"))?;
         Ok(())
     }
 
@@ -220,7 +229,7 @@ impl SessionActor {
     ) {
         use crate::session::memory::dream::*;
 
-        let existing_memory = std::fs::read_to_string(storage.workspace_memory_file()).ok();
+        let existing_memory = std::fs::read_to_string(storage.workspace_consolidated_file()).ok();
 
         let dream_msg =
             match build_dream_user_message(sessions_dir, sessions, existing_memory.as_deref()) {
@@ -277,11 +286,16 @@ impl SessionActor {
         }
 
         let dream_path = if matches!(result.status, DreamStatus::Completed { .. }) {
-            let path = storage.workspace_memory_file();
-            self.memory.reindex_and_embed(&path, "dream").await;
+            let path = storage.workspace_consolidated_file();
+            // Must match what the session-start full rebuild assigns, or the
+            // same chunks get a different source (and different temporal decay)
+            // depending on which path indexed them.
+            self.memory
+                .reindex_and_embed(&path, storage.classify_source(&path))
+                .await;
 
             // Remove stale index chunks only for session files that
-            // were actually deleted — stems skipped by the recency guard
+            // were actually deleted 鈥?stems skipped by the recency guard
             // are still on disk and must remain searchable.
             if !result.cleaned_stems.is_empty() {
                 let deleted_paths: Vec<std::path::PathBuf> = result
@@ -349,6 +363,297 @@ impl SessionActor {
         Ok(response.assistant_text())
     }
 
+    /// Reflect on the finished session and curate `MEMORY.md`.
+    ///
+    /// One model call reviews the recent conversation plus the current curated
+    /// entries and answers with add / replace / remove operations. Operations
+    /// go through the same entry semantics, safety checks, and capacity limit
+    /// as an agent-issued `memory_write`.
+    ///
+    /// Runs at most once per session, at session end, before dream. Failures
+    /// are non-fatal: nothing is written and shutdown proceeds.
+    pub(super) async fn maybe_run_reflection(&self) {
+        use crate::session::memory::reflection::*;
+
+        let config = self.memory.reflection_config.clone();
+        if !config.enabled || self.startup_hints.is_subagent {
+            return;
+        }
+        let Some(storage) = self.memory.storage() else {
+            return;
+        };
+        if self
+            .memory
+            .reflection_ran
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+
+        let conversation = self.chat_state_handle.get_conversation().await;
+        let real_queries =
+            crate::session::helpers::session_compact::extract_real_user_queries(&conversation);
+        if real_queries.len() < config.min_real_user_messages {
+            tracing::debug!(
+                target: xai_grok_telemetry::memory_log::TARGET,
+                real = real_queries.len(),
+                min = config.min_real_user_messages,
+                "MEMORY_REFLECT: session too short, skipping"
+            );
+            return;
+        }
+
+        let user_md = std::fs::read_to_string(storage.user_memory_file()).unwrap_or_default();
+        let workspace_md = std::fs::read_to_string(storage.workspace_memory_file())
+            .unwrap_or_default();
+        let global_md = std::fs::read_to_string(storage.global_memory_file()).unwrap_or_default();
+        let limit = self.memory.curated_char_limit;
+
+        let chat_history = crate::sampling::conversation_to_chat_messages(
+            xai_chat_state::compaction_utils::prepare_conversation_for_summarization(conversation),
+        );
+        let recent = super::helpers::memory_flush::select_flush_window(chat_history, 20);
+        let mut items: Vec<ConversationItem> =
+            vec![ConversationItem::system(REFLECTION_SYSTEM_PROMPT)];
+        items.extend(recent.into_iter().map(ConversationItem::from));
+        items.push(ConversationItem::user(build_curated_context(
+            &user_md,
+            &workspace_md,
+            &global_md,
+            limit,
+        )));
+
+        tracing::info!(
+            target: xai_grok_telemetry::memory_log::TARGET,
+            "MEMORY_REFLECT: starting"
+        );
+
+        let response = match tokio::time::timeout(
+            std::time::Duration::from_secs(config.timeout_secs),
+            self.run_reflection_model_call(items, config.model.clone()),
+        )
+        .await
+        {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    target: xai_grok_telemetry::memory_log::TARGET,
+                    error = %e,
+                    "MEMORY_REFLECT: model call failed"
+                );
+                return;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    target: xai_grok_telemetry::memory_log::TARGET,
+                    timeout_secs = config.timeout_secs,
+                    "MEMORY_REFLECT: model call timed out"
+                );
+                return;
+            }
+        };
+
+        let ops = match parse_reflection_ops(&response, config.max_ops) {
+            Ok(ops) => ops,
+            Err(e) => {
+                tracing::warn!(
+                    target: xai_grok_telemetry::memory_log::TARGET,
+                    error = %e,
+                    "MEMORY_REFLECT: unparseable response, nothing written"
+                );
+                return;
+            }
+        };
+        if ops.is_empty() {
+            tracing::info!(
+                target: xai_grok_telemetry::memory_log::TARGET,
+                "MEMORY_REFLECT: no operations proposed"
+            );
+            return;
+        }
+
+        if !config.is_auto_apply() {
+            let result = match self.stage_reflection_ops(&storage, &ops) {
+                Ok(path) => {
+                    self.send_xai_notification(XaiSessionUpdate::MemoryReflectionCompleted {
+                        result: format!("staged {} operation(s)", ops.len()),
+                        path: Some(path.display().to_string()),
+                    })
+                    .await;
+                    // Count the whole queue, not this batch: the indicator
+                    // reports everything awaiting the user, including
+                    // proposals earlier sessions left behind.
+                    self.send_pending_approvals_update(&path).await;
+                    format!("staged {}", ops.len())
+                }
+                Err(e) => format!("staging failed: {e}"),
+            };
+            tracing::info!(
+                target: xai_grok_telemetry::memory_log::TARGET,
+                %result,
+                "MEMORY_REFLECT: staged (apply = staged)"
+            );
+            return;
+        }
+
+        let report = apply_reflection_ops(
+            &ops,
+            &user_md,
+            &workspace_md,
+            &global_md,
+            limit,
+            !storage.is_ephemeral(),
+        );
+        for skipped in &report.skipped {
+            tracing::info!(
+                target: xai_grok_telemetry::memory_log::TARGET,
+                action = %skipped.op.action,
+                scope = %skipped.op.scope,
+                reason = %skipped.reason,
+                "MEMORY_REFLECT: operation skipped"
+            );
+        }
+        if !report.changed() {
+            tracing::info!(
+                target: xai_grok_telemetry::memory_log::TARGET,
+                proposed = ops.len(),
+                "MEMORY_REFLECT: no operation applied"
+            );
+            return;
+        }
+
+        let mut written: Vec<std::path::PathBuf> = Vec::new();
+        let mut write_error: Option<String> = None;
+        for (body, scope, path) in [
+            (
+                report.user_body.as_deref(),
+                crate::session::memory::MemoryScope::User,
+                storage.user_memory_file(),
+            ),
+            (
+                report.workspace_body.as_deref(),
+                crate::session::memory::MemoryScope::Workspace,
+                storage.workspace_memory_file(),
+            ),
+            (
+                report.global_body.as_deref(),
+                crate::session::memory::MemoryScope::Global,
+                storage.global_memory_file(),
+            ),
+        ] {
+            let Some(body) = body else { continue };
+            match storage.write_long_term(scope, body) {
+                Ok(()) => written.push(path),
+                Err(e) => {
+                    tracing::warn!(
+                        target: xai_grok_telemetry::memory_log::TARGET,
+                        error = %e,
+                        scope = ?scope,
+                        "MEMORY_REFLECT: write failed"
+                    );
+                    write_error = Some(e.to_string());
+                }
+            }
+        }
+        for path in &written {
+            self.reindex_and_embed(path, storage.classify_source(path))
+                .await;
+        }
+
+        let result = match write_error {
+            Some(e) => format!("partial write: {e}"),
+            None => format!("{} operation(s) applied", report.applied),
+        };
+        tracing::info!(
+            target: xai_grok_telemetry::memory_log::TARGET,
+            applied = report.applied,
+            skipped = report.skipped.len(),
+            "MEMORY_REFLECT: {result}"
+        );
+        self.send_xai_notification(XaiSessionUpdate::MemoryReflectionCompleted {
+            result,
+            path: written.first().map(|p| p.display().to_string()),
+        })
+        .await;
+    }
+
+    /// Park proposed operations in the approval queue for later review.
+    fn stage_reflection_ops(
+        &self,
+        storage: &crate::session::memory::MemoryStorage,
+        ops: &[crate::session::memory::reflection::ReflectionOp],
+    ) -> std::io::Result<std::path::PathBuf> {
+        let path = storage.pending_file();
+        crate::session::memory::pending::append(&path, &self.session_info.id.to_string(), ops)?;
+        Ok(path)
+    }
+
+    /// Report edits an earlier session left staged, so the indicator is up as
+    /// soon as this session opens.
+    ///
+    /// Reflection stages its proposals at session *end*, which is exactly when
+    /// the user is least likely to be looking — the queue is really read at the
+    /// start of the next session. Skips the disk read entirely when no queue
+    /// file exists, which is every session under the default auto-apply mode.
+    pub(super) async fn report_pending_approvals_at_start(&self) {
+        let Some(storage) = self.memory.storage() else {
+            return;
+        };
+        let path = storage.pending_file();
+        if !path.exists() {
+            return;
+        }
+        self.send_pending_approvals_update(&path).await;
+    }
+
+    /// Tell the client how many staged edits are waiting.
+    ///
+    /// Fire-and-forget: the count is advisory, and a session never blocks on
+    /// the user acting on it.
+    pub(crate) async fn send_pending_approvals_update(&self, path: &std::path::Path) {
+        let count = crate::session::memory::pending::count(path);
+        self.send_xai_notification(XaiSessionUpdate::MemoryPendingApprovals {
+            count,
+            path: path.display().to_string(),
+        })
+        .await;
+    }
+
+    /// Make the reflection model call using the session's sampling client.
+    async fn run_reflection_model_call(
+        &self,
+        items: Vec<ConversationItem>,
+        model_override: Option<String>,
+    ) -> Result<String, acp::Error> {
+        let sampling_client = self.prepare_chat_completion(false).await?;
+        let model = match model_override.or_else(|| self.memory.flush_config.flush_model.clone()) {
+            Some(m) => m,
+            None => self
+                .chat_state_handle
+                .get_sampling_config()
+                .await
+                .map(|c| c.model)
+                .unwrap_or_default(),
+        };
+        let session_id = self.session_info.id.to_string();
+        let request = ConversationRequest {
+            items,
+            model: Some(model),
+            x_grok_conv_id: Some(session_id.clone()),
+            x_grok_req_id: Some(format!("xai-reflect-{}", uuid::Uuid::new_v4())),
+            x_grok_session_id: Some(session_id),
+            x_grok_agent_id: Some(xai_grok_telemetry::id::agent_id()),
+            ..Default::default()
+        };
+        let response = sampling_client
+            .conversation_collect(request)
+            .await
+            .map_err(|e| {
+                acp::Error::internal_error().data(format!("reflection model call failed: {e}"))
+            })?;
+        Ok(response.assistant_text())
+    }
+
     /// Run a memory flush turn that summarizes recent conversation into a
     /// session log. Sets `is_flushing` to suppress auto-compact during the call.
     ///
@@ -368,7 +673,7 @@ impl SessionActor {
         if !self.memory.try_acquire_flush_lock() {
             tracing::info!(
                 target: xai_grok_telemetry::memory_log::TARGET,
-                "MEMORY_FLUSH: skipped — another flush is already in progress (trigger={trigger})"
+                "MEMORY_FLUSH: skipped 鈥?another flush is already in progress (trigger={trigger})"
             );
             return false;
         }
@@ -612,7 +917,7 @@ impl SessionActor {
             },
         );
 
-        // Rolling session summary on each flush — crash-safe telemetry.
+        // Rolling session summary on each flush 鈥?crash-safe telemetry.
         let total_chunks = self
             .memory
             .storage

@@ -81,6 +81,7 @@ pub struct AgentBuilder {
     memory_enabled: bool,
     memory_global_path: Option<String>,
     memory_workspace_path: Option<String>,
+    memory_digest: Option<String>,
     is_non_interactive: bool,
     system_prompt_label: String,
     session_env: Option<Arc<HashMap<String, String>>>,
@@ -203,6 +204,7 @@ impl AgentBuilder {
             memory_enabled: false,
             memory_global_path: None,
             memory_workspace_path: None,
+            memory_digest: None,
             is_non_interactive: false,
             system_prompt_label: crate::prompt::context::DEFAULT_SYSTEM_PROMPT_LABEL.to_string(),
             session_env: None,
@@ -334,6 +336,11 @@ impl AgentBuilder {
     ) -> Self {
         self.memory_global_path = global_path;
         self.memory_workspace_path = workspace_path;
+        self
+    }
+    /// Frozen curated-memory digest for system-prompt injection (session-start snapshot).
+    pub fn with_memory_digest(mut self, digest: Option<String>) -> Self {
+        self.memory_digest = digest;
         self
     }
     /// Mark this session as non-interactive (headless / SDK / stdio /
@@ -695,6 +702,9 @@ impl AgentBuilder {
                 tool_config
                     .tools
                     .push((&memory::get_tool::MemoryGetImpl).into());
+                tool_config
+                    .tools
+                    .push((&memory::write_tool::MemoryWriteImpl).into());
             }
             if self.web_search_config.is_enabled() {
                 use xai_grok_tools::implementations::grok_build;
@@ -1141,6 +1151,7 @@ impl AgentBuilder {
             memory_enabled: self.memory_enabled,
             memory_global_path: self.memory_global_path,
             memory_workspace_path: self.memory_workspace_path,
+            memory_digest: self.memory_digest,
             role_instructions: self.role_instructions,
             persona_instructions: self.persona_instructions,
             os_name: Some(std::env::consts::OS.to_string()),

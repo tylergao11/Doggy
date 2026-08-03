@@ -2259,6 +2259,9 @@ mod inline_auto_compact_flow_tests {
                 compaction_recovery_count: std::sync::atomic::AtomicU64::new(0),
                 chunks_added: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 dream_config: Default::default(),
+                reflection_config: Default::default(),
+                reflection_ran: std::sync::atomic::AtomicBool::new(false),
+                curated_char_limit: crate::config::DEFAULT_CURATED_CHAR_LIMIT,
                 dream_count: std::sync::atomic::AtomicU64::new(0),
                 dream_success_count: std::sync::atomic::AtomicU64::new(0),
                 dream_error_count: std::sync::atomic::AtomicU64::new(0),
@@ -3065,6 +3068,9 @@ mod inline_auto_compact_flow_tests {
             compaction_recovery_count: std::sync::atomic::AtomicU64::new(0),
             chunks_added: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             dream_config: Default::default(),
+            reflection_config: Default::default(),
+            reflection_ran: std::sync::atomic::AtomicBool::new(false),
+            curated_char_limit: crate::config::DEFAULT_CURATED_CHAR_LIMIT,
             dream_count: std::sync::atomic::AtomicU64::new(0),
             dream_success_count: std::sync::atomic::AtomicU64::new(0),
             dream_error_count: std::sync::atomic::AtomicU64::new(0),
@@ -3081,6 +3087,7 @@ mod inline_auto_compact_flow_tests {
             .map(std::time::Duration::from_secs);
         actor
     }
+
     /// Verify that `last_idle_flush_conversation_len` is reset after
     /// compaction shrinks the conversation. Without this reset the
     /// interval flush guard (`current_len > last_len`) stays false

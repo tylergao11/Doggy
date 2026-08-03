@@ -123,6 +123,7 @@ mod tests {
             "working_directory": "/tmp/test",
             "current_date": "2025-01-15",
             "memory_enabled": false,
+            "memory_digest": "",
             "is_non_interactive": false,
             "system_prompt_label": crate::prompt::context::DEFAULT_SYSTEM_PROMPT_LABEL,
         })
@@ -472,45 +473,59 @@ mod tests {
     // ── Memory section ──────────────────────────────────────────────
 
     #[test]
-    fn test_memory_enabled_does_not_render_memory_section() {
-        // The <memory> section was removed from the minimal base prompt.
-        // Even when the memory tools are registered AND memory_enabled=true,
-        // the trimmed template must not render a memory section. (Complements
-        // test_memory_disabled_omits_memory_section, which covers the default.)
+    fn test_memory_enabled_with_digest_renders_memory_section() {
         let tools: HashMap<ToolKind, String> = [
             (ToolKind::Read, "read_file".to_string()),
             (ToolKind::MemorySearch, "memory_search".to_string()),
             (ToolKind::MemoryGet, "memory_get".to_string()),
+            (ToolKind::MemoryWrite, "memory_write".to_string()),
         ]
         .into();
         let r = TemplateRenderer::new(tools, HashMap::new());
         let mut p = default_placeholders();
         p["memory_enabled"] = serde_json::json!(true);
+        p["memory_digest"] = serde_json::json!("MEMORY [5% — 20/3200 chars]\nprefer tabs");
         let prompt = render_base(&r, &p);
         assert!(
-            !prompt.contains("<memory>"),
-            "Memory section was removed from the minimal prompt"
+            prompt.contains("<memory>"),
+            "Memory section must render when enabled + digest/tools present"
         );
         assert!(
-            !prompt.contains("### Memory Management"),
-            "Memory Management section was removed from the minimal prompt"
+            prompt.contains("MEMORY [5% — 20/3200 chars]"),
+            "digest header must appear in the prompt"
         );
         assert!(
-            !prompt.contains("memory_search"),
-            "memory tool names must not appear once the memory section is gone"
+            prompt.contains("prefer tabs"),
+            "digest body must appear in the prompt"
         );
-        assert!(
-            !prompt.contains("memory_get"),
-            "memory tool names must not appear once the memory section is gone"
-        );
+        assert!(prompt.contains("memory_search"));
+        assert!(prompt.contains("memory_write"));
     }
 
     #[test]
     fn test_memory_disabled_omits_memory_section() {
-        let prompt = render_base(&default_renderer(), &default_placeholders());
+        let mut p = default_placeholders();
+        p["memory_digest"] = serde_json::json!("MEMORY [1% — 1/3200 chars]\nshould-not-appear");
+        let prompt = render_base(&default_renderer(), &p);
         assert!(
             !prompt.contains("<memory>"),
-            "Memory section must be omitted"
+            "Memory section must be omitted when memory_enabled=false"
+        );
+        assert!(
+            !prompt.contains("should-not-appear"),
+            "digest must not appear when memory is disabled"
+        );
+    }
+
+    #[test]
+    fn test_memory_enabled_empty_digest_without_tools_omits_section() {
+        let mut p = default_placeholders();
+        p["memory_enabled"] = serde_json::json!(true);
+        p["memory_digest"] = serde_json::json!("");
+        let prompt = render_base(&default_renderer(), &p);
+        assert!(
+            !prompt.contains("<memory>"),
+            "empty digest without tools must not render a memory section"
         );
     }
 

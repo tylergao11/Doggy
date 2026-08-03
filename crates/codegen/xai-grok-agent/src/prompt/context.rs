@@ -119,6 +119,11 @@ pub struct PromptContext {
     pub memory_global_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_workspace_path: Option<String>,
+    /// Frozen curated-memory digest assembled at session start (≤ 3200 chars).
+    /// Injected into the system prompt when present; not updated mid-session
+    /// (prefix-cache stability).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_digest: Option<String>,
     /// Role instructions to include in the system prompt.
     /// Moved from the user task prompt so they're part of durable identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -184,6 +189,7 @@ impl Default for PromptContext {
             memory_enabled: false,
             memory_global_path: None,
             memory_workspace_path: None,
+            memory_digest: None,
             role_instructions: None,
             persona_instructions: None,
             os_name: None,
@@ -238,7 +244,8 @@ impl PromptContext {
         serde_json::json!(
             { "memory_enabled" : self.memory_enabled, "memory_global_path" : self
             .memory_global_path.as_deref().unwrap_or(""), "memory_workspace_path" : self
-            .memory_workspace_path.as_deref().unwrap_or(""), "role_instructions" : self
+            .memory_workspace_path.as_deref().unwrap_or(""), "memory_digest" : self
+            .memory_digest.as_deref().unwrap_or(""), "role_instructions" : self
             .role_instructions.as_deref().unwrap_or(""), "persona_instructions" : self
             .persona_instructions.as_deref().unwrap_or(""), "os_name" : self.os_name
             .as_deref().unwrap_or(""), "shell_path" : self.shell_path.as_deref()
@@ -314,6 +321,7 @@ mod tests {
             memory_enabled: false,
             memory_global_path: None,
             memory_workspace_path: None,
+            memory_digest: None,
             role_instructions: None,
             persona_instructions: None,
             os_name: None,
@@ -517,6 +525,33 @@ mod tests {
         assert_eq!(p["memory_enabled"], true);
     }
     #[test]
+    fn test_placeholders_memory_digest_present() {
+        let mut ctx = test_context();
+        ctx.memory_enabled = true;
+        ctx.memory_digest = Some("MEMORY [10% — 50/3200 chars]\nnote about tabs".into());
+        let p = ctx.placeholders();
+        assert_eq!(
+            p["memory_digest"],
+            "MEMORY [10% — 50/3200 chars]\nnote about tabs"
+        );
+    }
+    #[test]
+    fn test_placeholders_memory_digest_absent() {
+        let ctx = test_context();
+        let p = ctx.placeholders();
+        assert_eq!(p["memory_digest"], "");
+    }
+    #[test]
+    fn test_placeholders_memory_digest_within_budget() {
+        let mut ctx = test_context();
+        let long = "x".repeat(4000);
+        let digest = format!("MEMORY [100% — 3200/3200 chars]\n{}", &long[..3100]);
+        ctx.memory_digest = Some(digest.clone());
+        let p = ctx.placeholders();
+        assert_eq!(p["memory_digest"], digest);
+        assert!(p["memory_digest"].as_str().unwrap().chars().count() <= 3200 + 50);
+    }
+    #[test]
     fn test_default_context() {
         let ctx = PromptContext::default();
         assert_eq!(ctx.version, 1);
@@ -599,6 +634,7 @@ mod tests {
             memory_enabled: true,
             memory_global_path: None,
             memory_workspace_path: None,
+            memory_digest: None,
             role_instructions: None,
             persona_instructions: None,
             os_name: None,
@@ -781,11 +817,13 @@ mod tests {
         minijinja::context! {
             os_name => "linux", shell_path => "/bin/bash", working_directory =>
             "/workspace", current_date => "2026-03-26", memory_enabled => true,
+            memory_digest => "MEMORY [1% — 10/3200 chars]\nws note",
             role_instructions => "", persona_instructions => "", tools =>
             minijinja::context! { by_kind => minijinja::context! { read =>
             "hashline_read", edit => "hashline_edit", search => "hashline_grep", execute
             => "run_terminal_cmd", background_task_action => "get_task_output",
-            memory_search => "memory_search", memory_get => "memory_get", } },
+            memory_search => "memory_search", memory_get => "memory_get",
+            memory_write => "memory_write", } },
         }
     }
     #[test]

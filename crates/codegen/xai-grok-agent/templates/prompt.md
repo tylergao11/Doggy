@@ -41,6 +41,17 @@ Your text output is rendered as GitHub-flavored markdown (CommonMark). Use markd
 ${%- if not is_non_interactive %}
 
 <user_guide>
-Documentation about the Doggy TUI — including configuration, keyboard shortcuts, MCP servers, skills, theming, plugins, and more — is stored as `.md` files in `~/.grok/docs/user-guide/`. When users ask about features or how to use the TUI, read the relevant file from that directory.
+Documentation about the Doggy TUI — including configuration, keyboard shortcuts, MCP servers, skills, theming, plugins, and more — is stored as `.md` files in `~/.Doggy/docs/user-guide/`. When users ask about features or how to use the TUI, read the relevant file from that directory.
 </user_guide>
+${%- endif %}
+${%- if memory_enabled and (memory_digest or (tools.by_kind.memory_search and tools.by_kind.memory_get)) %}
+
+<memory>
+${%- if memory_digest %}
+${{ memory_digest }}
+${%- endif %}
+${%- if tools.by_kind.memory_search and tools.by_kind.memory_get %}
+Use `${{ tools.by_kind.memory_search }}` and `${{ tools.by_kind.memory_get }}` to recall past decisions and context. Search memory proactively for prior work or conventions.${%- if tools.by_kind.memory_write %} Use `${{ tools.by_kind.memory_write }}` to add, replace, or remove curated long-term entries when you learn durable facts.${%- endif %}
+${%- endif %}
+</memory>
 ${%- endif %}

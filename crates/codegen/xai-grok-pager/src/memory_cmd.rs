@@ -21,7 +21,10 @@ pub enum MemoryCommand {
         /// Clear global MEMORY.md
         #[arg(long, group = "scope")]
         global: bool,
-        /// Clear both workspace and global memory
+        /// Clear the user profile (USER.md)
+        #[arg(long, group = "scope")]
+        user: bool,
+        /// Clear workspace, global, and user memory
         #[arg(long, group = "scope")]
         all: bool,
         /// Skip confirmation prompt
@@ -52,18 +55,36 @@ fn global_target(storage: &MemoryStorage) -> ClearTarget {
     }
 }
 
+fn user_target(storage: &MemoryStorage) -> ClearTarget {
+    ClearTarget {
+        label: "user profile (USER.md)",
+        path: storage.user_memory_file(),
+        clear: |s| s.clear_user(),
+    }
+}
+
 pub fn run(args: MemoryArgs) -> Result<()> {
     match args.command {
         MemoryCommand::Clear {
-            global, all, yes, ..
+            global,
+            user,
+            all,
+            yes,
+            ..
         } => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
             let storage = MemoryStorage::new(&cwd, None);
 
             let targets = if all {
-                vec![workspace_target(&storage), global_target(&storage)]
+                vec![
+                    workspace_target(&storage),
+                    global_target(&storage),
+                    user_target(&storage),
+                ]
             } else if global {
                 vec![global_target(&storage)]
+            } else if user {
+                vec![user_target(&storage)]
             } else {
                 vec![workspace_target(&storage)]
             };

@@ -13720,6 +13720,7 @@ dependencies = [
  "xai-grok-shell-session-support",
  "xai-grok-subagent-resolution",
  "xai-grok-telemetry",
+ "xai-grok-test-support",
  "xai-grok-tools",
  "xai-grok-version",
  "xai-grok-workspace",
@@ -13848,6 +13849,29 @@ dependencies = [
  "xai-grok-secrets",
  "xai-mixpanel",
  "xai-token-estimation",
+]
+
+[[package]]
+name = "xai-grok-test-support"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "anyhow",
+ "async-trait",
+ "axum",
+ "clap",
+ "futures-util",
+ "libc",
+ "reqwest 0.12.24",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.27.0",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "xai-acp-lib",
 ]
 
 [[package]]

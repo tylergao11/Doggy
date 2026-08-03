@@ -32,23 +32,37 @@ pub fn build_memory_archive(storage: &MemoryStorage) -> Result<Vec<u8>> {
         }
     }
 
-    // MEMORY.md files
+    // Curated files
+    let user_mem = storage.user_memory_file();
+    if user_mem.is_file() {
+        ar.append_path_with_name(&user_mem, "global/USER.md")
+            .context("archive USER.md")?;
+    }
+
     let global_mem = storage.global_memory_file();
     if global_mem.is_file() {
         ar.append_path_with_name(&global_mem, "global/MEMORY.md")
             .context("archive global MEMORY.md")?;
     }
 
+    let ws_dir_name = storage
+        .workspace_dir()
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("workspace");
+
     let workspace_mem = storage.workspace_memory_file();
     if workspace_mem.is_file() {
-        let ws_dir_name = storage
-            .workspace_dir()
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("workspace");
         let archive_path = format!("{ws_dir_name}/MEMORY.md");
         ar.append_path_with_name(&workspace_mem, &archive_path)
             .context("archive workspace MEMORY.md")?;
+    }
+
+    let consolidated = storage.workspace_consolidated_file();
+    if consolidated.is_file() {
+        let archive_path = format!("{ws_dir_name}/consolidated.md");
+        ar.append_path_with_name(&consolidated, &archive_path)
+            .context("archive workspace consolidated.md")?;
     }
 
     let enc = ar.into_inner().context("finalize tar")?;
@@ -94,12 +108,16 @@ mod tests {
         storage.ensure_initialized().unwrap();
 
         std::fs::write(storage.global_memory_file(), "# Global Memory").unwrap();
+        std::fs::write(storage.user_memory_file(), "# User Profile").unwrap();
         std::fs::write(storage.workspace_memory_file(), "# Workspace Memory").unwrap();
+        storage.write_consolidated("## Dream\n\nconsolidated").unwrap();
 
         let archive = build_memory_archive(&storage).unwrap();
         let entries = tar_entry_names(&archive);
         assert!(entries.contains(&"global/MEMORY.md".to_string()));
+        assert!(entries.contains(&"global/USER.md".to_string()));
         assert!(entries.contains(&"test_ws/MEMORY.md".to_string()));
+        assert!(entries.contains(&"test_ws/consolidated.md".to_string()));
     }
 
     fn tar_entry_names(gz_bytes: &[u8]) -> Vec<String> {

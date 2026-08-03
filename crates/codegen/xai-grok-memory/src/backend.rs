@@ -120,6 +120,8 @@ pub struct MemoryBackendParams {
     /// - `"compaction_recovery"` — post-compaction context re-injection
     pub search_source: &'static str,
     pub embedding_credentials: EndpointScopedCredentials,
+    /// Per-scope curated MEMORY.md char limit for `memory_write` (default 2200).
+    pub curated_char_limit: u64,
 }
 
 impl MemoryBackendParams {
@@ -206,6 +208,8 @@ pub struct MemoryBackendImpl {
     /// injection and compaction-recovery backends use their own local counters.
     pub search_counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
     embedding_credentials: EndpointScopedCredentials,
+    /// Per-scope curated MEMORY.md char limit for `memory_write`.
+    curated_char_limit: u64,
 }
 
 impl MemoryBackendImpl {
@@ -225,6 +229,7 @@ impl MemoryBackendImpl {
             search_source: "tool",
             embedding_credentials: EndpointScopedCredentials::none(),
             search_counter: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            curated_char_limit: xai_grok_config_types::DEFAULT_CURATED_CHAR_LIMIT,
         }
     }
 
@@ -304,6 +309,7 @@ impl MemoryBackendImpl {
             backend = backend.with_watcher(w.clone(), params.stale_claim_secs);
         }
         backend.embedding_credentials = params.embedding_credentials.clone();
+        backend.curated_char_limit = params.curated_char_limit;
         backend
     }
 }
@@ -587,6 +593,58 @@ impl MemoryBackend for MemoryBackendImpl {
     fn default_search_min_score(&self) -> f64 {
         self.search_config.min_score as f64
     }
+
+    fn read_curated_memory(
+        &self,
+        scope: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        use super::storage::MemoryScope;
+        let path = match MemoryScope::parse(scope) {
+            Some(MemoryScope::User) => self.storage.user_memory_file(),
+            Some(MemoryScope::Global) => self.storage.global_memory_file(),
+            Some(MemoryScope::Workspace) => self.storage.workspace_memory_file(),
+            None => {
+                return Err(format!("invalid memory scope '{scope}'").into());
+            }
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(s) => Ok(s),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn write_curated_memory(
+        &self,
+        scope: &str,
+        content: &str,
+    ) -> Result<
+        xai_grok_tools::types::memory_backend::CuratedWriteOutcome,
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
+        use super::storage::MemoryScope;
+        let Some(mem_scope) = MemoryScope::parse(scope) else {
+            return Err(format!("invalid memory scope '{scope}'").into());
+        };
+        if self.storage.is_ephemeral() && mem_scope == MemoryScope::Workspace {
+            return Ok(xai_grok_tools::types::memory_backend::CuratedWriteOutcome {
+                skipped_ephemeral: true,
+            });
+        }
+        // Uses existing write_long_term without changing its signature/behavior.
+        self.storage.write_long_term(mem_scope, content)?;
+        Ok(xai_grok_tools::types::memory_backend::CuratedWriteOutcome {
+            skipped_ephemeral: false,
+        })
+    }
+
+    fn is_ephemeral_workspace(&self) -> bool {
+        self.storage.is_ephemeral()
+    }
+
+    fn curated_char_limit(&self) -> u64 {
+        self.curated_char_limit
+    }
 }
 
 #[cfg(test)]
@@ -606,6 +664,7 @@ mod factory_tests {
     fn make_params_fts_only(session_id: &str) -> MemoryBackendParams {
         MemoryBackendParams {
             session_id: session_id.to_string(),
+            curated_char_limit: xai_grok_config_types::DEFAULT_CURATED_CHAR_LIMIT,
             embed_config: None,
             embed_base_url: String::new(),
             embed_api_key: None,
@@ -1223,6 +1282,7 @@ mod factory_tests {
                 None,
                 Some(probe),
             ),
+            curated_char_limit: xai_grok_config_types::DEFAULT_CURATED_CHAR_LIMIT,
         };
 
         let provider = params.make_embedding_provider().await;

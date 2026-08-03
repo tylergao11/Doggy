@@ -1724,6 +1724,12 @@ impl SessionActor {
                 vec![],
                 vec![],
             ),
+            ToolInput::MemoryWrite(mw) => (
+                format!("Memory write: {}", mw.action),
+                acp::ToolKind::Other,
+                vec![],
+                vec![],
+            ),
             ToolInput::HashlineEdit(he) => (
                 format!("Edit `{}`", he.file_path),
                 acp::ToolKind::Edit,

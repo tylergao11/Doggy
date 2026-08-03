@@ -49,12 +49,49 @@ pub struct SessionMemory {
     pub chunks_added: Arc<AtomicU64>,
     /// autoDream consolidation config.
     pub dream_config: crate::config::MemoryDreamConfig,
+    /// Post-session reflection config.
+    pub reflection_config: crate::config::MemoryReflectionConfig,
+    /// Per-session latch: reflection runs at most once.
+    pub reflection_ran: AtomicBool,
+    /// Curated MEMORY.md char limit, shared with the `memory_write` gate.
+    pub curated_char_limit: u64,
     /// Number of dream consolidations attempted.
     pub dream_count: AtomicU64,
     /// Number of successful dream consolidations.
     pub dream_success_count: AtomicU64,
     /// Number of failed dream consolidations.
     pub dream_error_count: AtomicU64,
+}
+
+impl Default for SessionMemory {
+    /// Disabled memory subsystem with zeroed counters (test / placeholder default).
+    fn default() -> Self {
+        Self {
+            storage: RefCell::new(None),
+            save_on_end: true,
+            backend_params: None,
+            initial_injection_config: Default::default(),
+            context_injected: AtomicBool::new(false),
+            flush_config: crate::config::MemoryFlushConfig::default(),
+            is_flushing: AtomicBool::new(false),
+            last_flush_compaction: AtomicU64::new(0),
+            flush_count: AtomicU64::new(0),
+            last_flush_content: RefCell::new(None),
+            flush_success_count: AtomicU64::new(0),
+            flush_error_count: AtomicU64::new(0),
+            search_counter: RefCell::new(None),
+            injection_count: AtomicU64::new(0),
+            compaction_recovery_count: AtomicU64::new(0),
+            chunks_added: Arc::new(AtomicU64::new(0)),
+            dream_config: Default::default(),
+            reflection_config: Default::default(),
+            reflection_ran: AtomicBool::new(false),
+            curated_char_limit: crate::config::DEFAULT_CURATED_CHAR_LIMIT,
+            dream_count: AtomicU64::new(0),
+            dream_success_count: AtomicU64::new(0),
+            dream_error_count: AtomicU64::new(0),
+        }
+    }
 }
 
 impl SessionMemory {

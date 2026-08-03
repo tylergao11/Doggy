@@ -1186,6 +1186,12 @@ pub struct AgentView {
     /// toasts, keypress dismissal, and subagent open/close when propagated
     /// via [`Self::set_sticky_toast_recursive`].
     pub(crate) sticky_toast: Option<String>,
+    /// Reflection edits staged for approval in this workspace, from
+    /// `MemoryPendingApprovals`. Drives a passive status-bar indicator and
+    /// nothing else: it steals no keys and blocks no turn, so a fully
+    /// automatic run never stalls on it. Zero under the default auto-apply
+    /// mode — the user reviews the queue with `/memory` when they choose to.
+    pub(crate) memory_pending_count: usize,
     /// Transient "Switched to mode: X" banner shown above the prompt after
     /// Shift+Tab. (message, remaining_ticks). Full brightness for 2 s, then
     /// fades out over the final 0.3 s.

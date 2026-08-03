@@ -707,6 +707,11 @@ pub(crate) async fn spawn_session_actor(
             stale_claim_secs: watcher_config.stale_claim_secs,
             search_source: "tool",
             embedding_credentials: embed_credentials,
+            curated_char_limit: memory_config
+                .as_ref()
+                .map_or(xai_grok_config_types::DEFAULT_CURATED_CHAR_LIMIT, |mc| {
+                    mc.curated_char_limit
+                }),
         };
         let backend = crate::session::memory::MemoryBackendImpl::from_session_params(
             storage.clone(),
@@ -807,6 +812,54 @@ pub(crate) async fn spawn_session_actor(
         memory_workspace_path: memory_storage_for_session
             .as_ref()
             .map(|s| s.workspace_memory_file().to_string_lossy().into_owned()),
+        // Frozen snapshot: read curated MEMORY.md once at session start so the
+        // system-prompt prefix stays stable (prefix-cache friendly). Mid-session
+        // memory_write updates disk only — digest refreshes next session.
+        memory_digest: {
+            let memory_on = memory_config.as_ref().is_some_and(|mc| mc.enabled);
+            if memory_on {
+                // One-time relocation of pre-split dream output, so an
+                // oversized MEMORY.md can't permanently block memory_write.
+                if let Some(storage) = memory_storage_for_session.as_ref() {
+                    let limit = memory_config
+                        .as_ref()
+                        .map(|mc| mc.curated_char_limit)
+                        .unwrap_or(xai_grok_config_types::DEFAULT_CURATED_CHAR_LIMIT);
+                    if let Err(e) = storage.migrate_dream_output_if_needed(limit) {
+                        tracing::warn!(
+                            error = %e,
+                            "failed to migrate oversized MEMORY.md into consolidated.md"
+                        );
+                    }
+                }
+                // Bounded reads: this runs before the first turn, and these are
+                // files the user can hand-edit to any size.
+                use crate::session::memory::MemoryStorage;
+                let digest_source = |pick: fn(&MemoryStorage) -> std::path::PathBuf| {
+                    memory_storage_for_session
+                        .as_ref()
+                        .and_then(|s| {
+                            MemoryStorage::read_curated_prefix(
+                                &pick(s),
+                                crate::session::memory::CURATED_DIGEST_READ_LIMIT,
+                            )
+                            .ok()
+                        })
+                        .unwrap_or_default()
+                };
+                let usr = digest_source(|s| s.user_memory_file());
+                let ws = digest_source(|s| s.workspace_memory_file());
+                let gl = digest_source(|s| s.global_memory_file());
+                xai_grok_tools::implementations::memory::assemble_memory_digest(
+                    &usr,
+                    &ws,
+                    &gl,
+                    xai_grok_tools::implementations::memory::MEMORY_DIGEST_BUDGET,
+                )
+            } else {
+                None
+            }
+        },
         memory_backend: memory_backend_for_spec,
         web_search_config: web_search_config.clone(),
         backend_search: backend_tools_enabled,
@@ -1174,6 +1227,15 @@ pub(crate) async fn spawn_session_actor(
             dream_config: memory_config
                 .as_ref()
                 .map_or_else(Default::default, |mc| mc.dream),
+            reflection_config: memory_config
+                .as_ref()
+                .map_or_else(Default::default, |mc| mc.reflection.clone()),
+            reflection_ran: std::sync::atomic::AtomicBool::new(false),
+            curated_char_limit: memory_config
+                .as_ref()
+                .map_or(crate::config::DEFAULT_CURATED_CHAR_LIMIT, |mc| {
+                    mc.curated_char_limit
+                }),
             dream_count: std::sync::atomic::AtomicU64::new(0),
             dream_success_count: std::sync::atomic::AtomicU64::new(0),
             dream_error_count: std::sync::atomic::AtomicU64::new(0),

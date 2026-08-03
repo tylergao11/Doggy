@@ -91,6 +91,8 @@ pub(crate) struct AgentRebuildSpec {
     pub memory_enabled: bool,
     pub memory_global_path: Option<String>,
     pub memory_workspace_path: Option<String>,
+    /// Frozen curated-memory digest assembled once at session start.
+    pub memory_digest: Option<String>,
     pub memory_backend: Option<Arc<dyn MemoryBackend>>,
     pub web_search_config: WebSearchConfig,
     pub backend_search: bool,
@@ -187,6 +189,7 @@ impl AgentRebuildSpec {
             memory_enabled,
             memory_global_path,
             memory_workspace_path,
+            memory_digest,
             memory_backend,
             web_search_config,
             backend_search,
@@ -239,6 +242,7 @@ impl AgentRebuildSpec {
         .with_reminder_policy(reminder_policy.clone())
         .with_memory_enabled(*memory_enabled)
         .with_memory_paths(memory_global_path.clone(), memory_workspace_path.clone())
+        .with_memory_digest(memory_digest.clone())
         .with_is_non_interactive(*is_non_interactive)
         .with_system_prompt_label(system_prompt_label.clone())
         .with_session_env(session_env.clone())
@@ -389,6 +393,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         memory_enabled: false,
         memory_global_path: None,
         memory_workspace_path: None,
+        memory_digest: None,
         memory_backend: None,
         web_search_config: WebSearchConfig::default(),
         backend_search: false,

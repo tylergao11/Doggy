@@ -422,6 +422,26 @@ pub enum SessionUpdate {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         path: Option<String>,
     },
+    /// Post-session reflection completed
+    MemoryReflectionCompleted {
+        /// Outcome description
+        result: String,
+        /// Path to the written memory file (if any)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
+    /// The number of reflection edits awaiting approval changed.
+    ///
+    /// Sent at session start and whenever the queue is written, so the client
+    /// can show a passive indicator. Always zero under the default auto-apply
+    /// mode — the queue only fills under `[memory.reflection] apply = "staged"`.
+    /// Purely informational: nothing waits on the user acting on it.
+    MemoryPendingApprovals {
+        /// Total staged edits awaiting the user in this workspace.
+        count: usize,
+        /// Path to the queue file, for clients that want to open it directly.
+        path: String,
+    },
     /// Session-end memory save completed
     MemorySessionSaved {
         /// Path to the written session log

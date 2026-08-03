@@ -36,6 +36,7 @@ pub mod login;
 pub mod logout;
 pub mod loop_cmd;
 pub mod mcps;
+pub mod memory;
 pub mod model;
 pub mod multiline;
 pub mod new;
@@ -111,6 +112,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(feedback::FeedbackCommand),
         Arc::new(announcements::AnnouncementsCommand),
         Arc::new(remember::RememberCommand),
+        Arc::new(memory::MemoryCommand),
         Arc::new(plan::PlanCommand),
         Arc::new(view_plan::ViewPlanCommand),
         Arc::new(resume::ResumeCommand),
@@ -447,6 +449,49 @@ mod tests {
             other => panic!("expected SendRememberNote, got {other:?}"),
         }
     }
+    /// Bare `/memory` lists rather than resolving: neither destructive choice
+    /// should be reachable by accident.
+    #[test]
+    fn memory_without_args_lists_the_queue() {
+        let models = ModelState::default();
+        let mut ctx = make_ctx(&models);
+        for args in ["", "   ", "pending"] {
+            let result = memory::MemoryCommand.run(&mut ctx, args);
+            assert!(
+                matches!(result, CommandResult::Action(Action::ShowMemoryPending)),
+                "{args:?} should list, got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn memory_approve_and_discard_map_to_opposite_resolutions() {
+        let models = ModelState::default();
+        let mut ctx = make_ctx(&models);
+        for (args, expected) in [("approve", true), ("discard", false)] {
+            match memory::MemoryCommand.run(&mut ctx, args) {
+                CommandResult::Action(Action::ResolveMemoryPending { approve }) => {
+                    assert_eq!(approve, expected, "for /memory {args}");
+                }
+                other => panic!("expected ResolveMemoryPending for {args}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn memory_rejects_an_unknown_subcommand() {
+        let models = ModelState::default();
+        let mut ctx = make_ctx(&models);
+        let result = memory::MemoryCommand.run(&mut ctx, "approve-all");
+        match result {
+            CommandResult::Error(message) => {
+                assert!(message.contains("approve-all"), "{message}");
+                assert!(message.contains("pending|approve|discard"), "{message}");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
     #[test]
     fn remember_whitespace_only_enters_remember_mode() {
         let models = ModelState::default();

@@ -3,9 +3,10 @@ pub mod watcher;
 use crate::bundle;
 use serde::Deserialize;
 pub use xai_grok_config_types::{
-    DEFAULT_RECENCY_DECAY, MemoryDreamConfig, MemoryEmbeddingConfig, MemoryFlushConfig,
-    MemoryGcConfig, MemoryIndexConfig, MemoryInitialInjectionConfig, MemorySearchConfig,
-    MemorySessionConfig, MemoryWatcherConfig, MmrConfig, PruningConfig, TemporalDecayConfig,
+    DEFAULT_CURATED_CHAR_LIMIT, DEFAULT_RECENCY_DECAY, MemoryCuratedConfig, MemoryDreamConfig,
+    MemoryEmbeddingConfig, MemoryFlushConfig, MemoryGcConfig, MemoryIndexConfig,
+    MemoryInitialInjectionConfig, MemoryReflectionConfig, MemorySearchConfig, MemorySessionConfig,
+    MemoryWatcherConfig, MmrConfig, PruningConfig, TemporalDecayConfig,
 };
 /// Full configuration for the memory system.
 ///
@@ -17,11 +18,15 @@ pub use xai_grok_config_types::{
 /// All sub-configs are pre-populated with production-ready defaults so that
 /// later PRs (indexing, search, flush, pruning) can read them without any
 /// config migration.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct MemoryConfig {
     /// Whether memory is enabled for this session.
     pub enabled: bool,
+    /// Max characters per curated MEMORY.md (global / workspace independent).
+    /// Enforced only by `memory_write`; dream / `write_long_term` is unlimited.
+    #[serde(default = "default_curated_char_limit")]
+    pub curated_char_limit: u64,
     /// Index / chunking settings.
     pub index: MemoryIndexConfig,
     /// Embedding provider settings.
@@ -38,6 +43,8 @@ pub struct MemoryConfig {
     pub gc: MemoryGcConfig,
     /// autoDream consolidation settings.
     pub dream: MemoryDreamConfig,
+    /// Post-session reflection settings.
+    pub reflection: MemoryReflectionConfig,
     /// Pre-compaction memory flush settings.
     ///
     /// **Note:** Configured under `[compaction.memory_flush]` in config.toml,
@@ -58,6 +65,33 @@ pub struct MemoryConfig {
     #[serde(skip)]
     pub flat_memory_root: bool,
 }
+
+fn default_curated_char_limit() -> u64 {
+    DEFAULT_CURATED_CHAR_LIMIT
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            curated_char_limit: DEFAULT_CURATED_CHAR_LIMIT,
+            index: MemoryIndexConfig::default(),
+            embedding: MemoryEmbeddingConfig::default(),
+            search: MemorySearchConfig::default(),
+            initial_injection: MemoryInitialInjectionConfig::default(),
+            session: MemorySessionConfig::default(),
+            watcher: MemoryWatcherConfig::default(),
+            gc: MemoryGcConfig::default(),
+            dream: MemoryDreamConfig::default(),
+            reflection: MemoryReflectionConfig::default(),
+            flush: MemoryFlushConfig::default(),
+            pruning: PruningConfig::default(),
+            root_dir_override: None,
+            flat_memory_root: false,
+        }
+    }
+}
+
 impl MemoryConfig {
     /// Resolve the final memory config from all sources (in priority order):
     /// 1. CLI flag `--no-memory` (absolute highest — always disables, overrides all)

@@ -12,9 +12,18 @@
 //!   ├── MEMORY.md                         # Global curated knowledge
 //!   └── {workspace_hash}/                 # Per-workspace (blake3(cwd)[..16])
 //!       ├── MEMORY.md                     # Project-level curated knowledge
+//!       ├── consolidated.md               # Dream output (long-form, searchable)
+//!       ├── reflection_pending.jsonl      # Staged edits awaiting approval
 //!       └── sessions/
 //!           └── YYYY-MM-DD-{slug}-{sid8}.md  # Session logs
 //! ```
+//!
+//! `MEMORY.md` is capacity-capped and injected into the system prompt;
+//! `consolidated.md` is unbounded and reached through search only. Curated
+//! files are written by `memory_write` and post-session [`reflection`];
+//! `consolidated.md` is written by [`dream`]. Under
+//! `apply = "staged"` reflection parks its edits in [`pending`] instead, and
+//! they land only once the user approves them.
 //!
 //! ## Feature Flag
 //!
@@ -30,7 +39,9 @@ pub mod dream_lock;
 pub mod embedding;
 pub mod index;
 pub mod mmr;
+pub mod pending;
 pub mod query_expansion;
+pub mod reflection;
 pub mod schema;
 pub mod search;
 pub mod storage;

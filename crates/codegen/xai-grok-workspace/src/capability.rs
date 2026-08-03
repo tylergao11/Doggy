@@ -90,6 +90,7 @@ pub(crate) const ALL_TOOL_KINDS: &[ToolKind] = &[
     ToolKind::Skill,
     ToolKind::MemorySearch,
     ToolKind::MemoryGet,
+    ToolKind::MemoryWrite,
     ToolKind::Task,
     ToolKind::EnterPlan,
     ToolKind::ExitPlan,
@@ -142,9 +143,9 @@ pub(crate) fn kind_allowed(mode: CapabilityMode, kind: ToolKind) -> bool {
         // Inspect class.
         Lsp | ListDir | List => matches!(mode, M::ReadOnly | M::ReadWrite | M::Execute),
 
-        // Edit class.
-        Edit | Write | Delete | Move | ImageGen | VideoGen | ImageToVideo | ReferenceToVideo
-        | DeployApp => matches!(mode, M::ReadWrite),
+        // Edit class (includes curated memory mutation).
+        Edit | Write | Delete | Move | MemoryWrite | ImageGen | VideoGen | ImageToVideo
+        | ReferenceToVideo | DeployApp => matches!(mode, M::ReadWrite),
 
         // Bash / shell.
         Execute => matches!(mode, M::Execute),

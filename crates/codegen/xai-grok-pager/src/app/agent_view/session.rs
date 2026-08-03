@@ -210,6 +210,7 @@ impl AgentView {
             word_select_tip_prompt_snapshot: None,
             last_word_select_probe: None,
             sticky_toast: None,
+            memory_pending_count: 0,
             mode_switch_banner: None,
             session_banner_active: false,
             pinned_upgrade_cta_live: false,

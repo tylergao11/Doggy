@@ -190,6 +190,7 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
         | XaiSessionUpdate::ImageDropped { .. }
         | XaiSessionUpdate::MemoryFlushCompleted { .. }
         | XaiSessionUpdate::MemoryDreamCompleted { .. }
+        | XaiSessionUpdate::MemoryReflectionCompleted { .. }
         | XaiSessionUpdate::MemorySessionSaved { .. }) => {
             let changed = apply_session_event(
                 update,
@@ -201,6 +202,11 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
                 refresh_context_used(agent, *tokens_after);
                 agent.todo.update_todos(Vec::new());
             }
+            changed
+        }
+        XaiSessionUpdate::MemoryPendingApprovals { count, .. } => {
+            let changed = agent.memory_pending_count != count;
+            agent.memory_pending_count = count;
             changed
         }
         XaiSessionUpdate::ImageCompressed {
@@ -1091,6 +1097,7 @@ pub(super) fn handle_child_session_notification(
         }
         ref update @ (XaiSessionUpdate::MemoryFlushCompleted { .. }
         | XaiSessionUpdate::MemoryDreamCompleted { .. }
+        | XaiSessionUpdate::MemoryReflectionCompleted { .. }
         | XaiSessionUpdate::MemorySessionSaved { .. }) => {
             if let Some(child_view) = agent.subagent_views.get_mut(child_sid) {
                 apply_session_event(

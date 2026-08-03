@@ -8,14 +8,50 @@ use std::path::{Path, PathBuf};
 
 use xai_grok_tools::util::grok_home::grok_home;
 
+/// Bytes read per curated file when assembling the session-start digest.
+///
+/// Ten times the digest budget: enough that no legitimately curated file is ever
+/// clipped, small enough that a pathological one cannot stall session start.
+/// See [`MemoryStorage::read_curated_prefix`].
+pub const CURATED_DIGEST_READ_LIMIT: usize =
+    10 * xai_grok_tools::implementations::memory::MEMORY_DIGEST_BUDGET;
+
 /// Scope for a memory write operation.
 /// Write-operation scope. Distinct from `xai_grok_agent::config::MemoryScope` (agent memory dir).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryScope {
-    /// Global memory — shared across all workspaces.
+    /// The user profile — who they are and how they like to work.
+    ///
+    /// Shared across all workspaces and the slowest-changing layer, which is
+    /// why it does not share a file with [`Self::Global`]: a churning pile of
+    /// cross-project technical facts would otherwise crowd out the handful of
+    /// stable facts about the person.
+    User,
+    /// Global memory — cross-project technical facts.
     Global,
     /// Workspace-scoped memory — specific to one project.
     Workspace,
+}
+
+impl MemoryScope {
+    /// Parse a scope name as used by `memory_write` and reflection operations.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "user" => Some(Self::User),
+            "global" => Some(Self::Global),
+            "workspace" => Some(Self::Workspace),
+            _ => None,
+        }
+    }
+
+    /// Wire name — the inverse of [`Self::parse`].
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Global => "global",
+            Self::Workspace => "workspace",
+        }
+    }
 }
 
 /// Handles file I/O for the memory storage layer.
@@ -121,17 +157,106 @@ impl MemoryStorage {
         self.global_dir.join("MEMORY.md")
     }
 
+    /// Read a bounded prefix of a curated file, for the session-start digest.
+    ///
+    /// The digest keeps at most a few thousand characters, and capacity limits
+    /// keep tool-written files near that size — but these are plain files a user
+    /// can paste anything into, and pre-limit installs can hold far more. This
+    /// caps the work on a path that runs before the first turn, so a 50 MB
+    /// `MEMORY.md` costs the same as a normal one.
+    ///
+    /// A missing file reads as empty. When the cap truncates, the trailing
+    /// partial entry is dropped so the digest never shows half a fact.
+    /// Never use this to load a file for rewriting: the dropped tail would be
+    /// written back as a deletion.
+    pub fn read_curated_prefix(path: &Path, max_bytes: usize) -> std::io::Result<String> {
+        use std::io::Read;
+
+        let file = match std::fs::File::open(path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+            Err(e) => return Err(e),
+        };
+
+        // One byte past the cap distinguishes "exactly full" from "truncated".
+        let mut buf = Vec::new();
+        file.take(max_bytes as u64 + 1).read_to_end(&mut buf)?;
+        let truncated = buf.len() > max_bytes;
+        buf.truncate(max_bytes.min(buf.len()));
+
+        let mut text = match String::from_utf8(buf) {
+            Ok(s) => s,
+            Err(e) => {
+                // The cut landed mid-character; keep the valid prefix.
+                let valid = e.utf8_error().valid_up_to();
+                let mut bytes = e.into_bytes();
+                bytes.truncate(valid);
+                String::from_utf8(bytes).expect("prefix validated by valid_up_to")
+            }
+        };
+
+        if truncated {
+            tracing::warn!(
+                path = %path.display(),
+                max_bytes,
+                "curated memory file exceeds the digest read cap; tail ignored"
+            );
+            if let Some(cut) = text.rfind("\n\n") {
+                text.truncate(cut);
+            }
+        }
+
+        Ok(text)
+    }
+
+    /// Path to the user profile, `USER.md`.
+    ///
+    /// Lives beside the global `MEMORY.md` so it inherits the same
+    /// cross-workspace lifetime and the same evergreen (no temporal decay)
+    /// classification from [`Self::classify_source`].
+    pub fn user_memory_file(&self) -> PathBuf {
+        self.global_dir.join("USER.md")
+    }
+
     /// Path to the workspace-scoped `MEMORY.md`.
+    ///
+    /// This is the *curated* file: short, entry-structured, capacity-capped,
+    /// and injected into the system prompt. Dream output goes to
+    /// [`Self::workspace_consolidated_file`] instead.
     pub fn workspace_memory_file(&self) -> PathBuf {
         self.workspace_dir.join("MEMORY.md")
+    }
+
+    /// Path to the workspace-scoped `consolidated.md` — the dream output file.
+    ///
+    /// Dream produces a long topic-structured document that would blow the
+    /// curated `MEMORY.md` capacity budget, so the two writers own separate
+    /// files. `consolidated.md` is searchable but never injected wholesale.
+    pub fn workspace_consolidated_file(&self) -> PathBuf {
+        self.workspace_dir.join("consolidated.md")
+    }
+
+    /// Path to the staged-reflection queue. See [`crate::pending`].
+    ///
+    /// Not a memory file: it is never indexed, searched, or archived — the
+    /// entries in it are proposals that have not been accepted yet.
+    pub fn pending_file(&self) -> PathBuf {
+        crate::pending::pending_file(&self.workspace_dir)
     }
 
     /// Classify a file path as a memory source type.
     ///
     /// Returns `"global"`, `"workspace"`, or `"session"` based on location.
+    /// `consolidated.md` counts as `"workspace"` so dream output keeps the
+    /// evergreen (no temporal decay) scoring that curated memory gets, and
+    /// `USER.md` counts as `"global"` for the same reason — it sits in the
+    /// global directory, so this needs no special case.
     pub fn classify_source(&self, path: &Path) -> &'static str {
         if path.starts_with(&self.workspace_dir) {
-            if path.file_name().is_some_and(|f| f == "MEMORY.md") {
+            if path
+                .file_name()
+                .is_some_and(|f| f == "MEMORY.md" || f == "consolidated.md")
+            {
                 "workspace"
             } else {
                 "session"
@@ -202,6 +327,10 @@ impl MemoryStorage {
         }
 
         let path = match scope {
+            MemoryScope::User => {
+                std::fs::create_dir_all(&self.global_dir)?;
+                self.user_memory_file()
+            }
             MemoryScope::Global => {
                 std::fs::create_dir_all(&self.global_dir)?;
                 self.global_memory_file()
@@ -216,6 +345,65 @@ impl MemoryStorage {
         tracing::debug!(path = %path.display(), scope = ?scope, "wrote long-term memory");
 
         Ok(())
+    }
+
+    /// Write the workspace `consolidated.md` (dream output).
+    ///
+    /// Overwrites any existing content, like [`Self::write_long_term`].
+    /// Skipped for ephemeral workspaces.
+    pub fn write_consolidated(&self, content: &str) -> std::io::Result<()> {
+        if self.ephemeral {
+            tracing::debug!("MEMORY_EPHEMERAL_SKIP: consolidated write skipped");
+            return Ok(());
+        }
+
+        std::fs::create_dir_all(&self.workspace_dir)?;
+        let path = self.workspace_consolidated_file();
+        std::fs::write(&path, content)?;
+        tracing::debug!(path = %path.display(), "wrote consolidated memory");
+
+        Ok(())
+    }
+
+    /// Move pre-split dream output out of the curated `MEMORY.md`.
+    ///
+    /// Before dream output was split into `consolidated.md`, dream overwrote
+    /// the workspace `MEMORY.md` with a document far larger than the curated
+    /// capacity limit — which would make every `memory_write` overflow. This
+    /// relocates such a file once, leaving `MEMORY.md` empty for curated use.
+    ///
+    /// Idempotent and conservative: does nothing once `consolidated.md`
+    /// exists, or when `MEMORY.md` is scaffold boilerplate or already within
+    /// `curated_limit`. Returns whether a migration was performed.
+    pub fn migrate_dream_output_if_needed(&self, curated_limit: u64) -> std::io::Result<bool> {
+        if self.ephemeral || self.workspace_consolidated_file().exists() {
+            return Ok(false);
+        }
+
+        let memory_path = self.workspace_memory_file();
+        let content = match std::fs::read_to_string(&memory_path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e),
+        };
+
+        let trimmed = content.trim();
+        if trimmed.is_empty()
+            || super::dream::is_scaffold_template(trimmed)
+            || trimmed.chars().count() as u64 <= curated_limit
+        {
+            return Ok(false);
+        }
+
+        self.write_consolidated(trimmed)?;
+        std::fs::write(&memory_path, "")?;
+        tracing::info!(
+            chars = trimmed.chars().count(),
+            path = %self.workspace_consolidated_file().display(),
+            "MEMORY_MIGRATE: moved oversized MEMORY.md into consolidated.md"
+        );
+
+        Ok(true)
     }
 
     /// Append content to the `MEMORY.md` for the given scope.
@@ -237,6 +425,10 @@ impl MemoryStorage {
         }
 
         let path = match scope {
+            MemoryScope::User => {
+                std::fs::create_dir_all(&self.global_dir)?;
+                self.user_memory_file()
+            }
             MemoryScope::Global => {
                 std::fs::create_dir_all(&self.global_dir)?;
                 self.global_memory_file()
@@ -320,6 +512,12 @@ impl MemoryStorage {
     pub fn list_memory_files(&self) -> std::io::Result<Vec<PathBuf>> {
         let mut files = Vec::new();
 
+        // User profile (USER.md)
+        let user_file = self.user_memory_file();
+        if user_file.is_file() {
+            files.push(user_file);
+        }
+
         // Global MEMORY.md
         let global_file = self.global_memory_file();
         if global_file.is_file() {
@@ -330,6 +528,12 @@ impl MemoryStorage {
         let workspace_file = self.workspace_memory_file();
         if workspace_file.is_file() {
             files.push(workspace_file);
+        }
+
+        // Workspace consolidated.md (dream output)
+        let consolidated_file = self.workspace_consolidated_file();
+        if consolidated_file.is_file() {
+            files.push(consolidated_file);
         }
 
         // Workspace session logs
@@ -377,6 +581,26 @@ impl MemoryStorage {
             tracing::info!(path = %global_file.display(), "created global MEMORY.md template");
         }
 
+        let user_file = self.user_memory_file();
+        if !user_file.exists() {
+            std::fs::write(
+                &user_file,
+                "# User Profile\n\
+                 \n\
+                 > Who you are and how you like to work. The slowest-changing\n\
+                 > memory layer — edit it directly whenever you like.\n\
+                 \n\
+                 ## About\n\
+                 \n\
+                 <!-- Name, role, language, timezone -->\n\
+                 \n\
+                 ## Working style\n\
+                 \n\
+                 <!-- How you want the agent to behave across every project -->\n",
+            )?;
+            tracing::info!(path = %user_file.display(), "created USER.md template");
+        }
+
         if self.ephemeral {
             tracing::debug!("MEMORY_EPHEMERAL_SKIP: workspace initialization skipped");
             return Ok(());
@@ -391,7 +615,7 @@ impl MemoryStorage {
                 format!(
                     "# Project Memory — {}\n\
                      \n\
-                     > Auto-populated by dream consolidation. Edit freely.\n",
+                     > Curated project notes. Edit freely.\n",
                     self.workspace_path.display()
                 ),
             )?;
@@ -434,6 +658,24 @@ impl MemoryStorage {
         match std::fs::remove_file(&path) {
             Ok(()) => {
                 tracing::info!(path = %path.display(), "cleared global memory");
+                Ok(true)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Remove `USER.md`.
+    ///
+    /// Separate from [`Self::clear_global`] even though both live in the global
+    /// directory: the profile is user-authored, so wiping it must be something
+    /// the user asked for, not a side effect of clearing derived memory.
+    /// Recreated as a fresh template on next `ensure_initialized()`.
+    pub fn clear_user(&self) -> std::io::Result<bool> {
+        let path = self.user_memory_file();
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                tracing::info!(path = %path.display(), "cleared user profile");
                 Ok(true)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -912,6 +1154,296 @@ mod tests {
     }
 
     #[test]
+    fn test_write_consolidated_is_separate_from_curated() {
+        let tmp = TempDir::new().unwrap();
+        let global_dir = tmp.path().join("memory");
+        let workspace_dir = global_dir.join("abc123");
+        let storage = MemoryStorage::with_paths(global_dir, workspace_dir.clone());
+
+        storage.write_long_term(MemoryScope::Workspace, "curated").unwrap();
+        storage.write_consolidated("## Dream\n\nlong form").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(workspace_dir.join("MEMORY.md")).unwrap(),
+            "curated"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace_dir.join("consolidated.md")).unwrap(),
+            "## Dream\n\nlong form"
+        );
+    }
+
+    /// `consolidated.md` must be listed: the session-start index build and the
+    /// `/memory` browser both enumerate through this, so omitting it would make
+    /// dream output unsearchable.
+    #[test]
+    fn test_list_memory_files_includes_consolidated() {
+        let tmp = TempDir::new().unwrap();
+        let global_dir = tmp.path().join("memory");
+        let workspace_dir = global_dir.join("abc123");
+        let storage = MemoryStorage::with_paths(global_dir, workspace_dir);
+
+        storage.write_consolidated("## Dream\n\ncontent").unwrap();
+
+        let files = storage.list_memory_files().unwrap();
+        assert!(
+            files.iter().any(|f| f.ends_with("consolidated.md")),
+            "{files:?}"
+        );
+    }
+
+    #[test]
+    fn test_user_scope_writes_to_its_own_file() {
+        let tmp = TempDir::new().unwrap();
+        let global_dir = tmp.path().join("memory");
+        let workspace_dir = global_dir.join("abc123");
+        let storage = MemoryStorage::with_paths(global_dir.clone(), workspace_dir);
+
+        storage
+            .write_long_term(MemoryScope::User, "prefers Chinese")
+            .unwrap();
+        storage
+            .write_long_term(MemoryScope::Global, "uses cargo nextest")
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(global_dir.join("USER.md")).unwrap(),
+            "prefers Chinese"
+        );
+        assert_eq!(
+            std::fs::read_to_string(global_dir.join("MEMORY.md")).unwrap(),
+            "uses cargo nextest",
+            "the user profile must not crowd out global technical facts"
+        );
+    }
+
+    #[test]
+    fn test_user_scope_appends_without_touching_global() {
+        let tmp = TempDir::new().unwrap();
+        let global_dir = tmp.path().join("memory");
+        let workspace_dir = global_dir.join("abc123");
+        let storage = MemoryStorage::with_paths(global_dir.clone(), workspace_dir);
+
+        storage
+            .append_to_memory(MemoryScope::User, "answers in Chinese")
+            .unwrap();
+        storage
+            .append_to_memory(MemoryScope::User, "prefers terse output")
+            .unwrap();
+
+        let user = std::fs::read_to_string(global_dir.join("USER.md")).unwrap();
+        assert!(user.contains("answers in Chinese"));
+        assert!(user.contains("prefers terse output"));
+        assert!(!global_dir.join("MEMORY.md").exists());
+    }
+
+    /// `USER.md` sits in the global directory, so it must classify as
+    /// `"global"` — anything else would subject the profile to temporal decay
+    /// and drop it out of evergreen retrieval.
+    #[test]
+    fn test_user_profile_classifies_as_global_source() {
+        let tmp = TempDir::new().unwrap();
+        let global_dir = tmp.path().join("memory");
+        let workspace_dir = global_dir.join("abc123");
+        let storage = MemoryStorage::with_paths(global_dir, workspace_dir);
+
+        assert_eq!(storage.classify_source(&storage.user_memory_file()), "global");
+    }
+
+    #[test]
+    fn test_list_memory_files_includes_user_profile() {
+        let tmp = TempDir::new().unwrap();
+        let global_dir = tmp.path().join("memory");
+        let workspace_dir = global_dir.join("abc123");
+        let storage = MemoryStorage::with_paths(global_dir, workspace_dir);
+
+        storage
+            .write_long_term(MemoryScope::User, "profile content")
+            .unwrap();
+
+        let files = storage.list_memory_files().unwrap();
+        assert!(files.iter().any(|f| f.ends_with("USER.md")), "{files:?}");
+    }
+
+    #[test]
+    fn test_ensure_initialized_scaffolds_user_profile() {
+        let tmp = TempDir::new().unwrap();
+        let global_dir = tmp.path().join("memory");
+        let workspace_dir = global_dir.join("abc123");
+        let storage = MemoryStorage::with_paths(global_dir, workspace_dir);
+
+        storage.ensure_initialized().unwrap();
+        let user = std::fs::read_to_string(storage.user_memory_file()).unwrap();
+        assert!(user.contains("# User Profile"));
+
+        // A second run must not clobber edits.
+        std::fs::write(storage.user_memory_file(), "hand-written").unwrap();
+        storage.ensure_initialized().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(storage.user_memory_file()).unwrap(),
+            "hand-written"
+        );
+    }
+
+    #[test]
+    fn test_read_curated_prefix_returns_whole_small_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("MEMORY.md");
+        std::fs::write(&path, "one\n\ntwo").unwrap();
+
+        let got = MemoryStorage::read_curated_prefix(&path, CURATED_DIGEST_READ_LIMIT).unwrap();
+        assert_eq!(got, "one\n\ntwo");
+    }
+
+    #[test]
+    fn test_read_curated_prefix_missing_file_is_empty() {
+        let tmp = TempDir::new().unwrap();
+        let got =
+            MemoryStorage::read_curated_prefix(&tmp.path().join("nope.md"), 1024).unwrap();
+        assert_eq!(got, "");
+    }
+
+    /// A file past the cap must lose its tail *at an entry boundary* — a half
+    /// entry in the system prompt reads as a fact with its qualifier cut off.
+    #[test]
+    fn test_read_curated_prefix_truncates_at_entry_boundary() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("MEMORY.md");
+        std::fs::write(&path, "first entry\n\nsecond entry\n\nthird entry").unwrap();
+
+        // Cap lands inside "second entry".
+        let got = MemoryStorage::read_curated_prefix(&path, 18).unwrap();
+        assert_eq!(got, "first entry");
+    }
+
+    #[test]
+    fn test_read_curated_prefix_exact_cap_is_not_truncated() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("MEMORY.md");
+        let body = "a\n\nbcd";
+        std::fs::write(&path, body).unwrap();
+
+        let got = MemoryStorage::read_curated_prefix(&path, body.len()).unwrap();
+        assert_eq!(got, body, "a file exactly at the cap is complete");
+    }
+
+    /// Cutting a multi-byte character must not produce a replacement char or an
+    /// error — the valid prefix is kept.
+    #[test]
+    fn test_read_curated_prefix_respects_char_boundaries() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("MEMORY.md");
+        std::fs::write(&path, "记忆记忆记忆").unwrap();
+
+        // 7 bytes cuts the third 3-byte character in half.
+        let got = MemoryStorage::read_curated_prefix(&path, 7).unwrap();
+        assert_eq!(got, "记忆");
+        assert!(!got.contains('\u{FFFD}'));
+    }
+
+    /// Nothing is silently dropped for a single oversized entry: with no entry
+    /// boundary to cut at, the clipped prefix is still returned.
+    #[test]
+    fn test_read_curated_prefix_single_huge_entry_keeps_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("MEMORY.md");
+        std::fs::write(&path, "x".repeat(10_000)).unwrap();
+
+        let got = MemoryStorage::read_curated_prefix(&path, 100).unwrap();
+        assert_eq!(got.len(), 100);
+    }
+
+    #[test]
+    fn test_digest_read_limit_clears_the_digest_budget() {
+        assert!(
+            CURATED_DIGEST_READ_LIMIT
+                > xai_grok_tools::implementations::memory::MEMORY_DIGEST_BUDGET,
+            "reading less than the digest can hold would clip curated memory"
+        );
+    }
+
+    #[test]
+    fn test_scope_parse_round_trips() {
+        for scope in [MemoryScope::User, MemoryScope::Global, MemoryScope::Workspace] {
+            assert_eq!(MemoryScope::parse(scope.as_str()), Some(scope));
+        }
+        assert_eq!(MemoryScope::parse("session"), None);
+        assert_eq!(MemoryScope::parse(""), None);
+    }
+
+    #[test]
+    fn test_consolidated_classifies_as_workspace_source() {
+        let tmp = TempDir::new().unwrap();
+        let global_dir = tmp.path().join("memory");
+        let workspace_dir = global_dir.join("abc123");
+        let storage = MemoryStorage::with_paths(global_dir, workspace_dir.clone());
+
+        assert_eq!(
+            storage.classify_source(&workspace_dir.join("consolidated.md")),
+            "workspace"
+        );
+        assert_eq!(
+            storage.classify_source(&workspace_dir.join("sessions").join("a.md")),
+            "session"
+        );
+    }
+
+    #[test]
+    fn test_migrate_moves_oversized_memory_into_consolidated() {
+        let tmp = TempDir::new().unwrap();
+        let global_dir = tmp.path().join("memory");
+        let workspace_dir = global_dir.join("abc123");
+        let storage = MemoryStorage::with_paths(global_dir, workspace_dir.clone());
+
+        let big = format!("## Dream output\n\n{}", "x".repeat(300));
+        std::fs::create_dir_all(&workspace_dir).unwrap();
+        std::fs::write(workspace_dir.join("MEMORY.md"), &big).unwrap();
+
+        assert!(storage.migrate_dream_output_if_needed(100).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(workspace_dir.join("consolidated.md")).unwrap(),
+            big
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace_dir.join("MEMORY.md")).unwrap(),
+            ""
+        );
+
+        // Idempotent: a second run is a no-op even if MEMORY.md refills.
+        std::fs::write(workspace_dir.join("MEMORY.md"), &big).unwrap();
+        assert!(!storage.migrate_dream_output_if_needed(100).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(workspace_dir.join("MEMORY.md")).unwrap(),
+            big
+        );
+    }
+
+    #[test]
+    fn test_migrate_leaves_scaffold_and_within_limit_files_alone() {
+        let tmp = TempDir::new().unwrap();
+        let global_dir = tmp.path().join("memory");
+        let workspace_dir = global_dir.join("abc123");
+        let storage = MemoryStorage::with_paths(global_dir, workspace_dir.clone());
+        std::fs::create_dir_all(&workspace_dir).unwrap();
+
+        // Missing file.
+        assert!(!storage.migrate_dream_output_if_needed(100).unwrap());
+
+        // Within limit.
+        std::fs::write(workspace_dir.join("MEMORY.md"), "short curated entry").unwrap();
+        assert!(!storage.migrate_dream_output_if_needed(100).unwrap());
+
+        // Scaffold template, even when longer than the limit.
+        let scaffold = format!(
+            "# Project Memory\n\n> Curated project notes. Edit freely.\n{}",
+            " ".repeat(200)
+        );
+        std::fs::write(workspace_dir.join("MEMORY.md"), &scaffold).unwrap();
+        assert!(!storage.migrate_dream_output_if_needed(10).unwrap());
+        assert!(!workspace_dir.join("consolidated.md").exists());
+    }
+
+    #[test]
     fn test_storage_list_memory_files() {
         let tmp = TempDir::new().unwrap();
         let global_dir = tmp.path().join("memory");
@@ -1267,6 +1799,39 @@ mod tests {
         assert!(removed);
         assert!(!global_dir.join("MEMORY.md").exists());
         assert!(global_dir.is_dir(), "global directory itself should remain");
+    }
+
+    /// Clearing derived global memory must leave the hand-written profile alone.
+    #[test]
+    fn test_clear_global_keeps_the_user_profile() {
+        let tmp = TempDir::new().unwrap();
+        let global_dir = tmp.path().join("memory");
+        let workspace_dir = global_dir.join("abc123");
+        let storage = MemoryStorage::with_paths(global_dir.clone(), workspace_dir);
+
+        storage.ensure_initialized().unwrap();
+        std::fs::write(storage.user_memory_file(), "answers in Chinese").unwrap();
+
+        assert!(storage.clear_global().unwrap());
+        assert_eq!(
+            std::fs::read_to_string(storage.user_memory_file()).unwrap(),
+            "answers in Chinese"
+        );
+    }
+
+    #[test]
+    fn test_clear_user_removes_only_the_profile() {
+        let tmp = TempDir::new().unwrap();
+        let global_dir = tmp.path().join("memory");
+        let workspace_dir = global_dir.join("abc123");
+        let storage = MemoryStorage::with_paths(global_dir.clone(), workspace_dir);
+
+        storage.ensure_initialized().unwrap();
+
+        assert!(storage.clear_user().unwrap());
+        assert!(!storage.user_memory_file().exists());
+        assert!(global_dir.join("MEMORY.md").exists());
+        assert!(!storage.clear_user().unwrap(), "second clear is a no-op");
     }
 
     #[test]

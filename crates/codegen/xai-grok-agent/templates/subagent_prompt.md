@@ -65,10 +65,15 @@ Shell: ${{ shell_path }}
 Workspace Path: ${{ working_directory }}
 Current Date: ${{ current_date }}
 </user_info>
-${%- if memory_enabled and tools.by_kind.memory_search and tools.by_kind.memory_get %}
+${%- if memory_enabled and (memory_digest or (tools.by_kind.memory_search and tools.by_kind.memory_get)) %}
 
 <memory>
-Use `${{ tools.by_kind.memory_search }}` and `${{ tools.by_kind.memory_get }}` to recall past decisions and context. Search memory proactively for prior work or conventions.
+${%- if memory_digest %}
+${{ memory_digest }}
+${%- endif %}
+${%- if tools.by_kind.memory_search and tools.by_kind.memory_get %}
+Use `${{ tools.by_kind.memory_search }}` and `${{ tools.by_kind.memory_get }}` to recall past decisions and context. Search memory proactively for prior work or conventions.${%- if tools.by_kind.memory_write %} Use `${{ tools.by_kind.memory_write }}` to add, replace, or remove curated long-term entries when you learn durable facts.${%- endif %}
+${%- endif %}
 </memory>
 ${%- endif %}
 ${%- if role_instructions %}

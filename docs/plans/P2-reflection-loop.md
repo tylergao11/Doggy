@@ -1,6 +1,6 @@
 # P2 — 后台自省闭环(Reflection Loop)
 
-状态:执行中(Fable 直接执行)。前置:P1 已交付并终审通过(memory_write / 容量闸 / 冻结 digest)。
+状态:已实现(T0 → T1 → T2)。前置:P1 已交付并终审通过(memory_write / 容量闸 / 冻结 digest)。
 
 ## 目标
 
@@ -88,3 +88,22 @@ memory_write / 反思写盘只改磁盘 + 通知,新 digest 下个会话生效�
 6. 反思:解析容错(非 JSON → 记 failed 不 panic)、max_ops 截断、容量溢出 op 跳过且文件不写坏、
    ephemeral 只跳 workspace op——均有单测。
 7. `cargo test -p xai-grok-agent --lib prompt::template` 全绿(本阶段不动模板)。
+
+## 实现过程中追加的改动(计划外但必需)
+
+- `list_memory_files()` 与 `build_memory_archive()` 补入 `consolidated.md`。二者分别喂
+  会话启动时的索引重建和 `/memory` 浏览 / 记忆导出;不补的话 dream 输出只能靠 watcher
+  机会性入索引,且在 UI 和导出里彻底消失。
+- `MEMORY_WRITE_TOOL_NAME` 补进 `register_memory_tools`(P1 遗漏):中途 `/memory on`
+  开启记忆时只注册了 search/get,memory_write 不可调用。
+- `backend.rs` 的一处测试构造器补 `curated_char_limit`(P1 遗漏,导致 `xai-grok-memory`
+  的 lib 测试目标编译不过)。
+- workspace 脚手架文案从 "Auto-populated by dream consolidation" 改为
+  "Curated project notes",并把新文案加入 `is_scaffold_template` 的标记表(旧标记保留,
+  以便老版本写下的脚手架仍能正确识别)。
+- `parse_entries` 过滤模板脚手架(纯标题行、HTML 注释、生成的免责声明)。P1 遗留:
+  自动生成的 MEMORY.md 模板会被当成真实条目——每个新工作区都往 system prompt 注入
+  模板文字,并让容量统计从非零起步。在唯一解析入口修,digest / 容量闸 / 反思三处口径一致。
+- dream 与反思写盘后的增量索引改用 `classify_source(path)`,与会话启动时的全量重建
+  一致。此前 dream 传字面量 `"dream"`,该来源既不在 evergreen 名单里(会被时间衰减),
+  也不在 evergreen 补充检索的 source 过滤里,同一文件的 source 会随索引路径而变。
