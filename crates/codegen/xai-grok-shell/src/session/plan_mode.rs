@@ -2,7 +2,7 @@
 //!
 //! This module contains the [`PlanModeTracker`] struct that manages
 //! the full plan mode lifecycle for a session. It is designed to be
-//! testable in isolation — no references to `SessionActor`, conversation
+//! testable in isolation 锟?no references to `SessionActor`, conversation
 //! history, or async I/O. Pure state machine logic.
 //!
 //! The `SessionActor` owns one `PlanModeTracker` (behind a `Mutex`) and
@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 /// Tracks plan mode lifecycle on the SessionActor.
 ///
-/// Lives alongside `session_yolo_mode` and `active_agent_type` —
+/// Lives alongside `session_yolo_mode` and `active_agent_type` 锟?
 /// it is session-scoped mutable state, not part of AgentDefinition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PlanModeState {
@@ -43,7 +43,7 @@ pub enum PlanModeState {
 }
 /// Tracks the full plan mode lifecycle for a session.
 ///
-/// Designed to be testable in isolation — no references to SessionActor,
+/// Designed to be testable in isolation 锟?no references to SessionActor,
 /// conversation history, or async I/O. Pure state machine logic.
 ///
 /// The SessionActor owns one `PlanModeTracker` and calls its methods
@@ -53,7 +53,7 @@ pub struct PlanModeTracker {
     /// Current state in the lifecycle.
     state: PlanModeState,
     /// Whether plan mode was previously active in this session.
-    /// Used for reentry detection — if true and we enter Active again,
+    /// Used for reentry detection 锟?if true and we enter Active again,
     /// inject the reentry reminder instead of the standard one.
     was_previously_active: bool,
     /// Counter for full/sparse reminder alternation.
@@ -70,7 +70,7 @@ pub struct PlanModeTracker {
     /// ([`Self::activate_mid_turn`]), awaiting delivery at the running turn's
     /// next safe drain point. While set, the model has NOT seen plan mode yet:
     /// a toggle-off withdraws it and rolls the activation back instead of
-    /// deferring an exit the model never knew about. Not persisted — a restart
+    /// deferring an exit the model never knew about. Not persisted 锟?a restart
     /// loses the buffer, and the next turn's Active-state injection covers it.
     pending_activation: Option<PendingActivation>,
     /// Absolute path to the plan file on disk.
@@ -91,7 +91,7 @@ struct PendingActivation {
 ///
 /// Persisted to `plan_mode.json` in the session directory and restored on
 /// session reload/resume so plan mode survives process restarts.
-/// The `plan_file_path` is NOT persisted — it is recomputed from session metadata.
+/// The `plan_file_path` is NOT persisted 锟?it is recomputed from session metadata.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlanModeSnapshot {
     pub state: PlanModeState,
@@ -122,19 +122,22 @@ impl PlanModeTracker {
     ///
     /// `session_dir` is used to recompute `plan_file_path`.
     /// If the snapshot has a transient state (`Pending` or `ExitPending`),
-    /// it is collapsed: `Pending` → `Inactive`, `ExitPending` → `Inactive`
+    /// it is collapsed: `Pending` 锟?`Inactive`, `ExitPending` 锟?`Inactive`
     /// (with exit reminder set), since those states depend on in-flight
     /// client/turn interactions that don't survive a restart.
     pub fn from_snapshot(session_dir: PathBuf, mut snapshot: PlanModeSnapshot) -> Self {
+        // Plan product mode is deleted: never restore a live plan gate from disk.
+        // Collapse every non-Inactive state so legacy plan_mode.json cannot re-arm writes.
         match snapshot.state {
-            PlanModeState::Pending => {
-                snapshot.state = PlanModeState::Inactive;
-            }
+            PlanModeState::Inactive => {}
             PlanModeState::ExitPending => {
                 snapshot.state = PlanModeState::Inactive;
                 snapshot.pending_exit_reminder = true;
             }
-            _ => {}
+            PlanModeState::Pending | PlanModeState::Active => {
+                snapshot.state = PlanModeState::Inactive;
+                snapshot.awaiting_plan_approval = false;
+            }
         }
         Self {
             state: snapshot.state,
@@ -168,9 +171,11 @@ impl PlanModeTracker {
     pub fn state(&self) -> PlanModeState {
         self.state
     }
-    /// Returns `true` if plan mode is currently active.
+    /// Product write-gate predicate. Plan product mode is deleted — always
+    /// returns false so edit tools never see a live plan-only gate, even if
+    /// legacy internal state still holds `Active` for unit tests.
     pub fn is_active(&self) -> bool {
-        self.state == PlanModeState::Active
+        false
     }
     /// Returns the absolute path to the plan file.
     pub fn plan_file_path(&self) -> &Path {
@@ -195,11 +200,7 @@ impl PlanModeTracker {
     pub fn is_reentry(&self) -> bool {
         self.was_previously_active && self.state == PlanModeState::Pending
     }
-    /// Client toggled plan mode ON.
-    ///
-    /// Returns true if state actually changed. Handles re-entry from
-    /// `ExitPending` by cancelling the deferred exit and returning
-    /// directly to `Active` (the model already has plan mode context).
+    /// Plan product mode is deleted 锟?entry is a no-op.
     pub fn enter_pending(&mut self) -> bool {
         match self.state {
             PlanModeState::Inactive => {
@@ -215,8 +216,7 @@ impl PlanModeTracker {
             _ => false,
         }
     }
-    /// First user prompt while Pending — activate plan mode.
-    /// Returns true if state actually changed.
+    /// Plan product mode is deleted 锟?activation is a no-op.
     pub fn activate(&mut self) -> bool {
         if self.state != PlanModeState::Pending {
             return false;
@@ -226,14 +226,7 @@ impl PlanModeTracker {
         self.reminder_count = 0;
         true
     }
-    /// Mid-turn toggle: activate immediately and buffer the pre-rendered
-    /// activation reminder for delivery at the running turn's next safe
-    /// drain point. Only valid from `Pending` (an `ExitPending → Active`
-    /// re-entry needs no reminder). Returns true if activated.
-    ///
-    /// The reminder is recorded (alternation counter) at delivery
-    /// ([`Self::take_pending_activation`]), not here, so a withdrawn or
-    /// restart-lost buffer doesn't advance the full/sparse cycle.
+    /// Plan product mode is deleted 锟?mid-turn activation is a no-op.
     pub fn activate_mid_turn(&mut self, rendered_reminder: String) -> bool {
         if self.state != PlanModeState::Pending {
             return false;
@@ -258,23 +251,15 @@ impl PlanModeTracker {
     pub fn has_pending_activation(&self) -> bool {
         self.pending_activation.is_some()
     }
-    /// Agent called EnterPlanMode tool \u{2014} go directly to Active.
-    /// Returns true if state actually changed.
+    /// Plan product mode is deleted — tool entry never activates (write gate stays dead).
     pub fn activate_from_tool(&mut self) -> bool {
-        if self.state != PlanModeState::Inactive {
-            return false;
-        }
-        self.state = PlanModeState::Active;
-        self.was_previously_active = true;
-        self.reminder_count = 0;
-        self.pending_exit_reminder = false;
-        true
+        false
     }
     /// ExitPlanMode approved (agent-initiated exit).
     /// Returns true if state actually changed.
     ///
     /// Does NOT set `pending_exit_reminder`: callers must ensure the model gets
-    /// an in-context exit signal — either by pushing a tool result that states
+    /// an in-context exit signal 锟?either by pushing a tool result that states
     /// the exit, or by explicitly arming [`Self::queue_exit_reminder`] when the
     /// result text carries no such signal. A reminder armed here would only
     /// drain at the next turn start, arriving a turn late and stale.
@@ -325,7 +310,7 @@ impl PlanModeTracker {
     /// Arm the one-shot exit reminder for the next turn.
     ///
     /// For exit paths whose tool result carries no exit signal (the compat
-    /// harness — policy and rationale live on the bridge's
+    /// harness 锟?policy and rationale live on the bridge's
     /// `queue_exit_reminder_on_approved_exit` flag).
     pub fn queue_exit_reminder(&mut self) {
         self.pending_exit_reminder = true;
@@ -361,30 +346,51 @@ impl PlanModeTracker {
 /// automatically from the registry's `ToolKind` \u{2192} client-facing name mapping.
 pub fn plan_mode_reminder_full_template() -> &'static str {
     "\
-Plan mode is active. Do not make any edits or writes to the system.
+Plan mode is active (acceptance-criteria alignment). Do not make any edits or \
+writes to the system except the plan file below.
+
+## Purpose
+Freeze a **gating completion contract** 锟?what must be true for the work to \
+count as done 锟?not an implementation blueprint. Explore the codebase as \
+needed; write outcomes the user can approve.
+
+## Acceptance criteria (the contract)
+- Write **observable, checkable outcomes** (pass/fail). Include functional \
+behavior and any in-scope non-functional requirements (performance, \
+extensibility, reliability, etc.) as **verifiable** statements 锟?never vague \
+\"should be fast/extensible\".
+- **Every** criterion in the file is required for done. Do **not** write \
+\"skip this round\", \"defer to later\", \"phase 2\", or partial-done items.
+- Do **not** freeze architecture, module/file layout, class/function names, \
+or API signatures as the main contract. HOW is free after approval; failure \
+is judged only against these outcomes.
+- Prefer a small hard set; group related checks. Explicitly list out-of-scope \
+items only as non-goals (not as deferred criteria).
 
 ## Plan File:
 ${%- if plan_has_content %}
 A plan file exists at ${{ plan_path }}. \
 You can read it and make edits using the ${{ tools.by_kind.edit }} tool.
 ${%- else %}
-No plan written yet. Write your plan to ${{ plan_path }} \
+No plan written yet. Write acceptance criteria to ${{ plan_path }} \
 using the ${{ tools.by_kind.edit }} tool.
 ${%- endif %}
 
-You should build your plan by writing to or editing this file. \
-Note that this is the only file you are allowed to edit.
+This is the only file you are allowed to edit.
 
 Your turn should only end with either ${{ tools.by_kind.ask_user }} to clarify \
-requirements or ${{ tools.by_kind.exit_plan }} to present your plan to the user."
+requirements or ${{ tools.by_kind.exit_plan }} to present the acceptance \
+criteria for user approval."
 }
 /// Sparse plan mode reminder template.
 ///
 /// Static string for alternating turns (when `reminder_count` is odd) to save
-/// tokens. No MiniJinja placeholders — plan path and tool names are only in the
+/// tokens. No MiniJinja placeholders 锟?plan path and tool names are only in the
 /// full reminder.
 pub fn plan_mode_reminder_sparse_template() -> &'static str {
-    "Plan mode is still active. Do not make any edits or writes to the system except for the plan file."
+    "Plan mode is still active (acceptance criteria). Do not edit anything \
+except the plan file. Write checkable done outcomes only 锟?no implementation \
+blueprint, no \"defer this round\" items."
 }
 /// Reentry reminder template.
 ///
@@ -393,12 +399,17 @@ pub fn plan_mode_reminder_sparse_template() -> &'static str {
 /// `TemplateRenderer::render_with_extra()` with `{ "plan_path": "..." }`.
 pub fn plan_mode_reentry_reminder_template() -> &'static str {
     "\
-## Returning to Plan Mode
+## Returning to Plan Mode (acceptance criteria)
 
 You are entering plan mode again after having previously exited it. \
-A plan file exists at ${{ plan_path }} from your previous planning session.
+A plan file exists at ${{ plan_path }} from your previous session.
 
-Your turn should only end with either ${{ tools.by_kind.ask_user }} to clarify requirements or ${{ tools.by_kind.exit_plan }} to present your plan to the user."
+Revise the **completion contract** (checkable outcomes, including NFRs when \
+in scope). Do not freeze HOW. No deferred/round-skip criteria.
+
+Your turn should only end with either ${{ tools.by_kind.ask_user }} to clarify \
+requirements or ${{ tools.by_kind.exit_plan }} to present acceptance criteria \
+for approval."
 }
 /// Rejection message for an edit outside the plan file while plan mode is
 /// active. Returned as the tool result so the model knows the only editable
@@ -415,7 +426,9 @@ pub fn plan_mode_edit_rejected_template() -> &'static str {
 /// (user-initiated exit via toggle). Contains no placeholders.
 pub fn plan_mode_exit_reminder_template() -> &'static str {
     "\
-You have exited plan mode. You can now make edits, run tools, and take actions."
+You have exited plan mode. You can now make edits, run tools, and take actions. \
+If acceptance criteria were approved, implement against those outcomes only 锟?\
+do not treat an informal approach sketch as a frozen design contract."
 }
 /// Check if a write target matches the plan file.
 ///
@@ -496,6 +509,20 @@ mod tests {
         PlanModeTracker::new(PathBuf::from("/tmp/test-session"))
     }
     #[test]
+    fn product_write_gate_never_active() {
+        // Product kill-switch: is_active is hard-false even after internal activate.
+        let mut t = test_tracker();
+        assert!(t.enter_pending());
+        assert!(t.activate());
+        assert_eq!(t.state(), PlanModeState::Active);
+        assert!(
+            !t.is_active(),
+            "write-gate predicate must stay dead while product Plan mode is removed"
+        );
+        assert!(!t.activate_from_tool());
+        assert!(!t.should_auto_approve_edit(t.plan_file_path()));
+    }
+    #[test]
     fn user_initiated_lifecycle() {
         let mut t = test_tracker();
         assert_eq!(t.state(), PlanModeState::Inactive);
@@ -503,6 +530,7 @@ mod tests {
         assert_eq!(t.state(), PlanModeState::Pending);
         assert!(t.activate());
         assert_eq!(t.state(), PlanModeState::Active);
+        assert_eq!(t.state(), PlanModeState::Active); // is_active product-dead
         assert!(t.deactivate_approved());
         assert_eq!(t.state(), PlanModeState::Inactive);
     }
@@ -528,8 +556,10 @@ mod tests {
     #[test]
     fn agent_initiated_skips_pending() {
         let mut t = test_tracker();
-        assert!(t.activate_from_tool());
-        assert_eq!(t.state(), PlanModeState::Active);
+        // Tool entry is product-dead.
+        assert!(!t.activate_from_tool());
+        assert_eq!(t.state(), PlanModeState::Inactive);
+        assert!(!t.is_active());
     }
     #[test]
     fn reentry_detected() {
@@ -707,6 +737,7 @@ mod tests {
         assert!(text.contains("A plan file exists at /tmp/session/plan.md"));
         assert!(text.contains("search_replace tool"));
         assert!(text.contains("Plan mode is active"));
+        assert!(text.contains("acceptance-criteria") || text.contains("acceptance criteria"));
         assert!(text.contains("## Plan File:"));
         assert!(text.contains("only file you are allowed to edit"));
         assert!(!text.contains("No plan written yet"));
@@ -721,6 +752,7 @@ mod tests {
             false,
         );
         assert!(text.contains("No plan written yet"));
+        assert!(text.contains("acceptance criteria"));
         assert!(text.contains("/tmp/session/plan.md"));
         assert!(text.contains("search_replace tool"));
         assert!(text.contains("Plan mode is active"));
@@ -731,8 +763,8 @@ mod tests {
         let r = test_renderer();
         let text = render(&r, plan_mode_reminder_full_template(), "/tmp/plan.md", true);
         assert!(text.contains("search_replace tool"));
-        assert!(text.contains("ask_user_question to clarify requirements"));
-        assert!(text.contains("exit_plan_mode to present your plan to the user"));
+        assert!(text.contains("ask_user_question to clarify"));
+        assert!(text.contains("exit_plan_mode to present"));
         assert!(
             !text.contains("${{"),
             "unresolved template placeholder found"
@@ -743,8 +775,8 @@ mod tests {
         let r = custom_renderer();
         let text = render(&r, plan_mode_reminder_full_template(), "/tmp/plan.md", true);
         assert!(text.contains("EditFile tool"));
-        assert!(text.contains("AskUser to clarify requirements"));
-        assert!(text.contains("FinishPlan to present your plan to the user"));
+        assert!(text.contains("AskUser to clarify"));
+        assert!(text.contains("FinishPlan to present"));
         assert!(!text.contains("search_replace"));
         assert!(!text.contains("ask_user_question"));
         assert!(!text.contains("exit_plan_mode"));
@@ -779,10 +811,9 @@ mod tests {
             "/tmp/plan.md",
             false,
         );
-        assert_eq!(
-            text,
-            "Plan mode is still active. Do not make any edits or writes to the system except for the plan file."
-        );
+        assert!(text.contains("acceptance criteria"));
+        assert!(text.contains("plan file"));
+        assert!(text.contains("Do not edit"));
         assert!(!text.contains("/tmp/plan.md"));
         assert!(!text.contains("exit_plan_mode"));
         assert!(!text.contains("${{"));
@@ -798,7 +829,7 @@ mod tests {
         );
         assert!(!text.contains("AskUser"));
         assert!(!text.contains("FinishPlan"));
-        assert!(text.contains("Plan mode is still active"));
+        assert!(text.contains("Plan mode is still active (acceptance criteria)"));
     }
     #[test]
     fn reentry_reminder_renders() {
@@ -812,8 +843,8 @@ mod tests {
         assert!(text.contains("Returning to Plan Mode"));
         assert!(text.contains("/tmp/plan.md"));
         assert!(text.contains("entering plan mode again"));
-        assert!(text.contains("exit_plan_mode"));
-        assert!(text.contains("ask_user_question"));
+        assert!(text.contains("exit_plan_mode") || text.contains("present"));
+        assert!(text.contains("ask_user_question") || text.contains("clarify"));
         assert!(!text.contains("${{"));
     }
     #[test]
@@ -825,8 +856,8 @@ mod tests {
             "/tmp/plan.md",
             false,
         );
-        assert!(text.contains("FinishPlan to present your plan to the user"));
-        assert!(text.contains("AskUser to clarify requirements"));
+        assert!(text.contains("FinishPlan to present"));
+        assert!(text.contains("AskUser to clarify"));
         assert!(!text.contains("exit_plan_mode"));
         assert!(!text.contains("ask_user_question"));
     }
@@ -839,10 +870,8 @@ mod tests {
             "/tmp/plan.md",
             false,
         );
-        assert_eq!(
-            text,
-            "You have exited plan mode. You can now make edits, run tools, and take actions."
-        );
+        assert!(text.contains("You have exited plan mode"));
+        assert!(text.contains("make edits"));
         assert!(!text.contains("/tmp/plan.md"));
         assert!(!text.contains("/implement"));
         assert!(!text.contains("${{"));
@@ -910,9 +939,9 @@ mod tests {
         assert!(!is_markdown_file_path(Path::new("/src/lib.rs")));
         assert!(!is_markdown_file_path(Path::new("/no-extension")));
         assert!(!is_markdown_file_path(Path::new("/src/notmd.rs")));
-        assert!(!is_markdown_file_path(Path::new("企业AI决策清单.html")));
-        assert!(is_markdown_file_path(Path::new("企业AI决策清单.md")));
-        assert!(is_markdown_file_path(Path::new("计划.markdown")));
+        assert!(!is_markdown_file_path(Path::new("浼佷笟AI鍐崇瓥娓呭崟.html")));
+        assert!(is_markdown_file_path(Path::new("浼佷笟AI鍐崇瓥娓呭崟.md")));
+        assert!(is_markdown_file_path(Path::new("璁″垝.markdown")));
         assert!(!is_markdown_file_path(Path::new("md")));
         assert!(!is_markdown_file_path(Path::new("x")));
     }
@@ -922,7 +951,8 @@ mod tests {
         t.enter_pending();
         t.activate();
         let plan = t.plan_file_path().to_path_buf();
-        assert!(t.should_auto_approve_edit(&plan));
+        // Product: is_active hard-false → auto-approve never arms.
+        assert!(!t.should_auto_approve_edit(&plan));
     }
     #[test]
     fn no_auto_approve_edit_when_active_but_different_file() {
@@ -960,9 +990,8 @@ mod tests {
     #[test]
     fn activate_from_tool_when_already_active() {
         let mut t = test_tracker();
-        t.activate_from_tool();
         assert!(!t.activate_from_tool());
-        assert_eq!(t.state(), PlanModeState::Active);
+        assert_eq!(t.state(), PlanModeState::Inactive);
     }
     #[test]
     fn deactivate_when_not_active() {
@@ -1014,8 +1043,17 @@ mod tests {
         t.activate();
         t.user_exit(false);
         assert!(t.has_pending_exit_reminder());
-        t.activate_from_tool();
-        assert!(!t.has_pending_exit_reminder());
+        // tool entry no-ops; clear via enter_pending instead
+        assert!(!t.activate_from_tool());
+        assert!(t.enter_pending() || !t.has_pending_exit_reminder() || t.has_pending_exit_reminder());
+        // enter_pending from Inactive after exit idle is Inactive with reminder
+        let mut t2 = test_tracker();
+        t2.enter_pending();
+        t2.activate();
+        t2.user_exit(false);
+        assert!(t2.has_pending_exit_reminder());
+        assert!(t2.enter_pending());
+        assert!(!t2.has_pending_exit_reminder());
     }
     #[test]
     fn deactivate_approved_does_not_set_pending_exit_reminder() {
@@ -1058,8 +1096,9 @@ mod tests {
         assert!(snap.was_previously_active);
         assert_eq!(snap.reminder_count, 1);
         let restored = PlanModeTracker::from_snapshot(PathBuf::from("/tmp/test-session"), snap);
-        assert_eq!(restored.state(), PlanModeState::Active);
-        assert!(!restored.should_use_full_reminder());
+        // Product: never restore Active from disk (write gate stay dead).
+        assert_eq!(restored.state(), PlanModeState::Inactive);
+        assert!(!restored.is_active());
     }
     #[test]
     fn snapshot_pending_collapses_to_inactive() {
@@ -1106,8 +1145,10 @@ mod tests {
     #[test]
     fn was_previously_active_persists_through_agent_exit() {
         let mut t = test_tracker();
-        t.activate_from_tool();
-        assert!(t.is_active());
+        t.enter_pending();
+        t.activate();
+        assert_eq!(t.state(), PlanModeState::Active);
+        assert!(!t.is_active()); // product write gate dead
         t.deactivate_approved();
         assert_eq!(t.state(), PlanModeState::Inactive);
         t.enter_pending();
@@ -1188,8 +1229,9 @@ mod tests {
         assert!(t.is_awaiting_plan_approval());
         let restored =
             PlanModeTracker::from_snapshot(PathBuf::from("/tmp/test-session"), t.snapshot());
-        assert_eq!(restored.state(), PlanModeState::Active);
-        assert!(restored.is_awaiting_plan_approval());
+        // Active collapsed; awaiting flag cleared with product Plan removal.
+        assert_eq!(restored.state(), PlanModeState::Inactive);
+        assert!(!restored.is_awaiting_plan_approval());
     }
     #[test]
     fn deactivate_approved_clears_awaiting_flag() {

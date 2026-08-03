@@ -186,7 +186,7 @@ pub enum Action {
     /// `contextual_hints.undo` gate.
     ShowUndoTip,
     /// The user typed a planning keyword into the prompt: show the seen-gated
-    /// "Planning? Check out plan mode via shift+tab" ephemeral tip on the active
+    /// "Multi-step goal? Switch to Goal via shift+tab" ephemeral tip on the active
     /// agent. Gated by the per-tip `contextual_hints.plan_mode` gate.
     ShowPlanNudge,
     /// The user double-clicked scrollback while Text selection is fold/nav:
@@ -416,8 +416,8 @@ pub enum Action {
     /// time, mirroring how `AnnouncementsHide` resolves its target). The
     /// payload records which surface activated it, for telemetry.
     AnnouncementsOpenCta(xai_grok_telemetry::events::AnnouncementCtaSurface),
-    /// Cycle session mode (Shift+Tab): Normal → Plan → Always-Approve → Normal.
-    /// Plan mode sends a signal to the shell; always-approve is local.
+    /// Cycle session mode (Shift+Tab): Auto → Goal → Auto.
+    /// Both postures use full tool permission by default.
     CycleMode,
     /// Toggle YOLO mode (auto-approve all permissions). Ctrl+O.
     ToggleYolo,
@@ -650,14 +650,12 @@ pub enum Action {
     ShowTasks,
     /// Show the current plan: preview popover if exists, toast if not.
     ShowPlan,
-    /// Enter plan mode. If a description is provided, also start a turn
-    /// with that text as the prompt.
+    /// Legacy action id: Plan mode removed. Dispatcher shows a Goal redirect
+    /// toast (optionally carrying a description that was meant for /plan).
     EnterPlanMode {
         description: Option<String>,
     },
-    /// Set plan mode on/off. Per-session, ACP-mediated (not persisted
-    /// to config.toml). `/plan <desc>` uses `EnterPlanMode` instead
-    /// because it also starts a turn.
+    /// Legacy plan-mode toggle — product path only toasts that Plan is removed.
     SetPlanMode(PlanModeKind),
     /// Enter feedback mode (visual prompt change, not a send).
     EnterFeedbackMode,
@@ -784,10 +782,10 @@ pub enum Action {
     /// subagent: kill). Double-press protected for top-level rows.
     DashboardStop,
     /// Cycle the dispatch input's mode for the next spawned agent
-    /// (Normal → Plan → Always-Approve → Normal). Bound to Shift+Tab.
+    /// (Auto → Goal → Auto). Bound to Shift+Tab.
     DashboardCycleMode,
-    /// Cycle the PEEKED agent's live mode (Normal → Plan → Always-Approve
-    /// → Normal) — the peek-panel counterpart to [`Self::DashboardCycleMode`].
+    /// Cycle the PEEKED agent's live mode (Auto → Goal → Auto)
+    /// — the peek-panel counterpart to [`Self::DashboardCycleMode`].
     /// Unlike that staged dispatch mode, this changes the existing agent
     /// directly (same effect as Shift+Tab inside the agent's chat view).
     /// Emitted when Shift+Tab fires while the peek panel is open.

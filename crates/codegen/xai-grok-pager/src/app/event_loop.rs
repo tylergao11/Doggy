@@ -3240,11 +3240,13 @@ fn process_effects(
         ask_user: app.ask_user,
         restore_code: app.restore_code,
         agent_override: app.agent_override.clone(),
-        yolo_mode: app.default_yolo,
-        auto_mode: super::dispatch::effective_auto(
-            app.default_yolo,
-            matches!(app.current_ui.permission_mode.as_deref(), Some("auto")),
-        ),
+        yolo_mode: app.default_yolo
+            || matches!(
+                app.current_ui.permission_mode.as_deref(),
+                Some("auto" | "always-approve")
+            ),
+        // Doggy: product "auto" is full allow — never stamp classifier autoMode.
+        auto_mode: false,
         chat_mode: app.chat_mode,
         screen_mode_label: Some(app.screen_mode.meta_label()),
         is_api_key_auth: app.is_api_key_auth,

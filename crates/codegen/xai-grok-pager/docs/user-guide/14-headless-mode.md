@@ -577,7 +577,7 @@ These flags supplement the [Command-Line Options](#command-line-options) table a
 | `--system-prompt-override`    | Override the agent's system prompt                |
 | `--check` / `--self-verify`   | Append verification loop (headless only)          |
 | `--best-of-n <N>`             | Run task N ways, pick best (headless only)         |
-| `--no-plan`                   | Disable plan mode                                 |
+| `--no-plan`                   | Legacy no-op (plan mode removed)                  |
 | `--no-subagents`              | Disable subagent spawning                         |
 | `--no-memory`                 | Disable cross-session memory                      |
 | `--disable-web-search`        | Disable web search and fetch tools                |

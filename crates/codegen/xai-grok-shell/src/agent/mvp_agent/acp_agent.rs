@@ -3557,11 +3557,15 @@ impl acp::Agent for MvpAgent {
                 );
             }
             let auto_mode_explicit = params.get("auto_mode").and_then(|v| v.as_bool());
-            let want_auto = auto_mode_explicit == Some(true)
-                || permission_mode == "auto";
+            // Doggy product: wire `"auto"` means full tool allow (yolo), not the
+            // retired classifier tier. Only an explicit `auto_mode: true` can
+            // request classifier mode; never derive it from permission_mode.
+            let want_auto = auto_mode_explicit == Some(true);
             let clear_auto = auto_mode_explicit == Some(false)
-                || (matches!(permission_mode, "always-approve" | "ask" | "default")
-                    && !want_auto);
+                || (matches!(
+                    permission_mode,
+                    "auto" | "always-approve" | "ask" | "default"
+                ) && !want_auto);
             let enable_auto = want_auto && yolo_signal != Some(true);
             if enable_auto || clear_auto {
                 let enabled = enable_auto;

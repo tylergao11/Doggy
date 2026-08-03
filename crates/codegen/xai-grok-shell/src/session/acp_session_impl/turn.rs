@@ -296,7 +296,38 @@ impl SessionActor {
             availability,
             skill_rewrite,
         ) {
-            Ok(blocks) => blocks,
+            Ok(blocks) => {
+                // Goal posture (Shift+Tab → Goal): plain prompts start a goal
+                // when no Active goal is already running and the harness is on.
+                if self.goal_posture.load(std::sync::atomic::Ordering::Relaxed)
+                    && self.goal_harness_enabled()
+                    && self.goal_tracker.lock().status()
+                        != Some(crate::session::goal_tracker::GoalStatus::Active)
+                {
+                    let objective: String = blocks
+                        .iter()
+                        .filter_map(|b| match b {
+                            acp::ContentBlock::Text(t) => Some(t.text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("");
+                    let objective = objective.trim();
+                    if !objective.is_empty() {
+                        let text_block = |text: String| {
+                            acp::ContentBlock::Text(acp::TextContent::new(text))
+                        };
+                        let reminder = self.setup_goal(objective, None).await;
+                        let mut out = vec![text_block(reminder)];
+                        out.extend(blocks);
+                        out
+                    } else {
+                        blocks
+                    }
+                } else {
+                    blocks
+                }
+            }
             Err(SlashCommandOutcome::Builtin(action)) => {
                 let text_block =
                     |text: String| acp::ContentBlock::Text(acp::TextContent::new(text));
@@ -315,6 +346,12 @@ impl SessionActor {
                         token_budget,
                     } => {
                         xai_grok_telemetry::session_ctx::log_event(slash_used);
+                        // /goal also implies Goal posture for the mode chip.
+                        self.goal_posture
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                        self.enqueue_current_mode_update(acp::SessionModeId::new(
+                            xai_grok_tools::types::SessionMode::Goal.as_id(),
+                        ));
                         let reminder = self.setup_goal(&objective, token_budget).await;
                         vec![text_block(reminder), text_block(objective)]
                     }

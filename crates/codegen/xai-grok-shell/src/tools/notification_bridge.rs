@@ -60,7 +60,7 @@ pub struct NotificationBridgeConfig {
     pub auto_wake_delivered: xai_grok_tools::reminders::task_completion::AutoWakeDeliveredIds,
     /// Channel for requesting trace uploads for synthetic auto-wake turns.
     /// Wrapped in `Arc<Mutex<..>>` because the coordinator creates the channel
-    /// after the notification bridge is spawned — the bridge reads the latest
+    /// after the notification bridge is spawned 鈥?the bridge reads the latest
     /// value on each notification.
     pub(crate) synthetic_trace_tx: Arc<
         std::sync::Mutex<
@@ -84,14 +84,14 @@ pub struct NotificationBridgeConfig {
     /// `InjectNotification` path instead of immediate synthetic prompts.
     pub auto_wake_enabled: bool,
     /// When `true`, an approved `PlanModeExited` also arms the tracker's
-    /// next-turn exit reminder. Grok-build leaves this `false` — its
+    /// next-turn exit reminder. Grok-build leaves this `false` 鈥?its
     /// exit-plan tool result already informs the model, and a deferred
     /// reminder would arrive stale. Shared with the session actor (the
     /// `gateway_enabled` pattern) and refreshed on zero-turn rebuilds so the
     /// bridge always agrees with the live session gate.
     pub queue_exit_reminder_on_approved_exit: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// When `true`, suppress the bash auto-wake synthetic prompt. Shared `Arc`
-    /// written at one chokepoint — see
+    /// written at one chokepoint 鈥?see
     /// `SessionActor::set_goal_loop_active_resource` for the rationale.
     pub goal_loop_active: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
@@ -105,7 +105,7 @@ pub(crate) fn resolved_tool_name(slot: &std::sync::OnceLock<Option<String>>) -> 
 }
 
 /// Stamp a bridge-emitted notification's meta before it forks into
-/// persistence + broadcast — see `util::event_id::ensure_event_id_meta`.
+/// persistence + broadcast 鈥?see `util::event_id::ensure_event_id_meta`.
 fn stamp_event_id(config: &NotificationBridgeConfig, meta: &mut Option<acp::Meta>) {
     crate::util::event_id::ensure_event_id_meta(&config.session_id.0, meta);
 }
@@ -129,7 +129,7 @@ pub fn spawn_notification_bridge(config: NotificationBridgeConfig) -> ToolNotifi
     handle
 }
 
-/// Emit a `CurrentModeUpdate` for the given [`SessionMode`] — persisted to
+/// Emit a `CurrentModeUpdate` for the given [`SessionMode`] 鈥?persisted to
 /// `updates.jsonl` so session replay re-applies the mode, and forwarded to
 /// the gateway so the pager updates live.
 async fn emit_current_mode_update(
@@ -210,7 +210,7 @@ async fn handle_notification(
             ));
             let mut notification = acp::SessionNotification::new(config.session_id.clone(), update);
             stamp_event_id(config, &mut notification.meta);
-            // Always persist — even when the gateway gate is closed, so bash
+            // Always persist 鈥?even when the gateway gate is closed, so bash
             // output survives replay when the client later calls loadSession.
             let _ = config.persistence_tx.send(PersistenceMsg::Update(
                 crate::session::storage::SessionUpdate::Acp(Box::new(notification.clone())),
@@ -256,7 +256,7 @@ async fn handle_notification(
                 task_id = %bg.task_id,
                 command = %bg.base.command,
                 output_file = %bg.output_file.display(),
-                "Bash execution backgrounded notification received — forwarding to TUI"
+                "Bash execution backgrounded notification received 鈥?forwarding to TUI"
             );
 
             // Forward as x.ai/task_backgrounded ExtNotification so the TUI can
@@ -333,7 +333,7 @@ async fn handle_notification(
 
             // Block-waited / explicitly-killed: the model already has the result
             // (blocking wait return or kill_task tool response). Skip auto-wake
-            // for both bash and monitors — a redundant synthetic prompt is noise.
+            // for both bash and monitors 鈥?a redundant synthetic prompt is noise.
             //
             // Natural monitor exit (including exit code 0) MUST auto-wake the
             // same way bash does. Relying only on the pipeline's terminal
@@ -448,7 +448,7 @@ async fn handle_notification(
                     );
                 }
             } else {
-                // Auto-wake disabled — fall back to idle-gated notification drain.
+                // Auto-wake disabled 鈥?fall back to idle-gated notification drain.
                 let tool_name = resolved_tool_name(&config.task_output_tool_name);
                 let read_name = resolved_tool_name(&config.read_tool_name);
                 let message = if is_monitor {
@@ -517,25 +517,25 @@ async fn handle_notification(
         }
 
         ToolNotification::PlanModeEntered(entered) => {
-            let activated = config.plan_mode.lock().activate_from_tool();
-            if activated {
-                *config.current_prompt_mode.lock() = crate::session::plan_mode::PromptMode::Plan;
-                *config.turn_prompt_mode.lock() = crate::session::plan_mode::PromptMode::Plan;
-
-                let snapshot = config.plan_mode.lock().snapshot();
+            // Plan product mode is deleted: never activate the write gate.
+            // Force inactive and surface Auto if a legacy tool still fires.
+            {
+                let mut tracker = config.plan_mode.lock();
+                let _ = tracker.activate_from_tool(); // no-op product kill-switch
+                if tracker.state() != crate::session::plan_mode::PlanModeState::Inactive {
+                    tracker.user_exit(false);
+                }
+                let snapshot = tracker.snapshot();
                 let _ = config
                     .persistence_tx
                     .send(PersistenceMsg::PlanModeState(snapshot));
-
-                // Notify the frontend immediately so the plan-mode chip appears in the UI
-                // (currentModeId = 'plan'). Without this the agent can silently enter plan
-                // mode via the EnterPlanMode tool and the UI would never update.
-                emit_current_mode_update(config, xai_grok_tools::types::SessionMode::Plan).await;
             }
+            *config.current_prompt_mode.lock() = crate::session::plan_mode::PromptMode::Agent;
+            emit_current_mode_update(config, xai_grok_tools::types::SessionMode::Default).await;
             tracing::info!(
                 tool_call_id = %entered.tool_call_id,
-                activated,
-                "Plan mode entered via EnterPlanMode tool"
+                activated = false,
+                "Plan mode enter ignored (product mode removed)"
             );
         }
 
@@ -944,7 +944,7 @@ mod tests {
     }
 
     /// Gap 1: while a goal loop is active, a completed background bash task
-    /// must NOT fire the synthetic auto-wake prompt — an async "task completed"
+    /// must NOT fire the synthetic auto-wake prompt 鈥?an async "task completed"
     /// wake mid-goal derails a weak model. It must also NOT be marked
     /// auto-wake-delivered (so surface 2's `TaskCompletionReminder` is free to
     /// drain it). The pager's `x.ai/task_completed` notification still fires.
@@ -969,7 +969,7 @@ mod tests {
         .await;
 
         // No synthetic prompt / CopyFile / InjectNotification while the goal
-        // loop drives the turn — only the Notification hook dispatch.
+        // loop drives the turn 鈥?only the Notification hook dispatch.
         match cmd_rx
             .try_recv()
             .expect("expected DispatchNotificationHook for task_complete")
@@ -1003,8 +1003,8 @@ mod tests {
         );
     }
 
-    /// Gap 1 (preserve non-goal behavior): with the goal loop inactive — the
-    /// default for a normal session — a completed bash task DOES fire the
+    /// Gap 1 (preserve non-goal behavior): with the goal loop inactive 鈥?the
+    /// default for a normal session 鈥?a completed bash task DOES fire the
     /// synthetic auto-wake prompt AND is marked auto-wake-delivered so surface
     /// 2 suppresses the duplicate reminder.
     #[tokio::test]
@@ -1060,7 +1060,7 @@ mod tests {
         None
     }
 
-    /// The completion notification carries the wake verdict — the pager keys
+    /// The completion notification carries the wake verdict 鈥?the pager keys
     /// its between-turns status line on it (skip when a wake response
     /// follows, emit when nothing else will mark the moment).
     #[tokio::test]
@@ -1084,7 +1084,7 @@ mod tests {
             "an auto-woken completion must stamp will_wake: true"
         );
 
-        // Suppressed leg: goal loop active — no wake follows the chip.
+        // Suppressed leg: goal loop active 鈥?no wake follows the chip.
         let (config, mut gateway_rx, _persistence_rx, _cmd_rx) = make_test_config_full();
         config
             .goal_loop_active
@@ -1104,7 +1104,7 @@ mod tests {
     }
 
     /// Dead session actor: the synthetic Prompt enqueue fails, so no wake will
-    /// ever run — the notification must stamp `will_wake: false`, not promise a
+    /// ever run 鈥?the notification must stamp `will_wake: false`, not promise a
     /// wake the send didn't queue (the pager would suppress its between-turns
     /// status line for a wake that never comes).
     #[tokio::test]
@@ -1131,7 +1131,7 @@ mod tests {
 
     /// Gap 1 (adjacent branch): the goal-loop arm sits BEFORE the
     /// `auto_wake_enabled == false` `InjectNotification` fallback, so an
-    /// auto-wake-DISABLED completion mid-goal must also be suppressed — it must
+    /// auto-wake-DISABLED completion mid-goal must also be suppressed 鈥?it must
     /// NOT fall through to the idle-gated `InjectNotification`. Guards against a
     /// future reorder that would leak a mid-goal notification.
     #[tokio::test]
@@ -1170,7 +1170,7 @@ mod tests {
     }
 
     /// Natural monitor exit (including exit code 0) must immediate-auto-wake
-    /// the same way bash does — not only via the idle-gated MonitorEvent path.
+    /// the same way bash does 鈥?not only via the idle-gated MonitorEvent path.
     /// Also drops queued MonitorEvents so a second NotificationDrain turn is
     /// not started for the same completion.
     #[tokio::test]
@@ -1267,14 +1267,14 @@ mod tests {
         )
         .await;
 
-        // No InjectNotification — only the TaskCompleted wake should talk to the model.
+        // No InjectNotification 鈥?only the TaskCompleted wake should talk to the model.
         assert!(
             cmd_rx.try_recv().is_err(),
             "post-auto-wake MonitorEvent must not InjectNotification"
         );
     }
 
-    /// Explicit kill of a monitor still skips auto-wake — the model already
+    /// Explicit kill of a monitor still skips auto-wake 鈥?the model already
     /// got the kill_task tool result.
     #[tokio::test]
     async fn monitor_explicitly_killed_skips_auto_wake() {
@@ -1343,7 +1343,7 @@ mod tests {
     async fn scheduled_task_created_is_persisted() {
         // A `/loop` create must be persisted (like TaskBackgrounded) so a
         // second terminal that resumes the session restores the loop from
-        // replay — otherwise it stays invisible until the loop next fires.
+        // replay 鈥?otherwise it stays invisible until the loop next fires.
         let (config, _gateway_rx, mut persistence_rx, _cmd_rx) = make_test_config_full();
         let notification = ToolNotification::ScheduledTaskCreated(
             xai_grok_tools::notification::types::ScheduledTaskCreated {
@@ -1380,10 +1380,10 @@ mod tests {
         }
     }
 
-    /// Persisted⇒stamped contract at the bridge's highest-frequency emitter:
+    /// Persisted鈬抯tamped contract at the bridge's highest-frequency emitter:
     /// the persisted bash-output line carries an `eventId`, and the live
     /// broadcast carries the SAME id (the meta is minted before the
-    /// persist/broadcast fork — divergent ids would re-deliver the line on a
+    /// persist/broadcast fork 鈥?divergent ids would re-deliver the line on a
     /// cursor reconnect).
     #[tokio::test]
     async fn bash_output_chunk_persists_and_broadcasts_one_event_id() {
@@ -1533,7 +1533,7 @@ mod tests {
     async fn current_mode_update_persisted_line_is_stamped() {
         let (config, _gateway_rx, mut persistence_rx, _cmd_rx) = make_test_config_full();
 
-        emit_current_mode_update(&config, xai_grok_tools::types::SessionMode::Plan).await;
+        emit_current_mode_update(&config, xai_grok_tools::types::SessionMode::Default).await;
 
         match persistence_rx.try_recv().expect("must persist") {
             PersistenceMsg::Update(crate::session::storage::SessionUpdate::Acp(notif)) => {
@@ -1596,7 +1596,7 @@ mod tests {
         // different session. In leader mode (one agent process, many sessions)
         // this is the cross-session leak: without the owner guard the foreign
         // monitor would inject a `<monitor-event>` reminder into this session's
-        // conversation. Assert it is fully dropped — no conversation injection
+        // conversation. Assert it is fully dropped 鈥?no conversation injection
         // and no pager forward.
         let (config, mut gateway_rx, _persistence_rx, mut cmd_rx) = make_test_config_full();
         let notification = make_monitor_event_notification("mon-foreign", Some("other-session"));
@@ -1674,7 +1674,7 @@ mod tests {
 
         handle_notification(&config, notification, &mut offsets).await;
 
-        // block_waited tasks must NOT inject a synthetic prompt — the
+        // block_waited tasks must NOT inject a synthetic prompt 鈥?the
         // blocking caller already received the result directly.
         match cmd_rx
             .try_recv()
@@ -1715,7 +1715,7 @@ mod tests {
 
         handle_notification(&config, notification, &mut offsets).await;
 
-        // explicitly_killed tasks must NOT inject a synthetic prompt — the
+        // explicitly_killed tasks must NOT inject a synthetic prompt 鈥?the
         // model already received the KillTaskResult from the kill tool.
         match cmd_rx
             .try_recv()
@@ -1844,7 +1844,8 @@ mod tests {
         // so `deactivate_approved` actually flips state and triggers the emit.
         {
             let mut tracker = config.plan_mode.lock();
-            assert!(tracker.activate_from_tool());
+            assert!(tracker.enter_pending());
+            assert!(tracker.activate());
         }
         *config.current_prompt_mode.lock() = crate::session::plan_mode::PromptMode::Plan;
         *config.turn_prompt_mode.lock() = crate::session::plan_mode::PromptMode::Plan;
@@ -1898,7 +1899,7 @@ mod tests {
 
     /// Default (grok) polarity: the exit_plan_mode tool result is the model's
     /// only exit signal, so an approved `PlanModeExited` must NOT arm the
-    /// deferred exit reminder — in memory or in the persisted snapshot.
+    /// deferred exit reminder 鈥?in memory or in the persisted snapshot.
     /// Sibling of `plan_mode_exited_arms_exit_reminder_when_gated`.
     #[tokio::test]
     async fn plan_mode_exited_does_not_arm_exit_reminder_by_default() {
@@ -1906,7 +1907,8 @@ mod tests {
 
         {
             let mut tracker = config.plan_mode.lock();
-            assert!(tracker.activate_from_tool());
+            assert!(tracker.enter_pending());
+            assert!(tracker.activate());
         }
 
         let notification =
@@ -1950,7 +1952,8 @@ mod tests {
 
         {
             let mut tracker = config.plan_mode.lock();
-            assert!(tracker.activate_from_tool());
+            assert!(tracker.enter_pending());
+            assert!(tracker.activate());
         }
 
         let notification =
@@ -1985,6 +1988,7 @@ mod tests {
     /// Symmetric to the exit test: `PlanModeEntered` emits
     /// `CurrentModeUpdate("plan")`.
     #[tokio::test]
+    #[ignore = "plan product mode deleted"]
     async fn plan_mode_entered_emits_current_mode_update_plan() {
         let (config, mut gateway_rx, mut persistence_rx, _cmd_rx) = make_test_config_full();
 

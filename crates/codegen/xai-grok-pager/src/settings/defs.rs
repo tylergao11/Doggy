@@ -75,28 +75,22 @@ const THEME_CHOICES: &[EnumChoice] = &[
 // ---------------------------------------------------------------------------
 // Permission-mode catalog.
 //
-// Persisted values map onto runtime flags:
-//   "always-approve" ↔ yolo_mode = true  (auto-approve all)
-//   "auto"           ↔ auto_mode = true  (LLM classifier; not full yolo)
-//   "ask"            ↔ both false (interactive prompts)
-//   "default"        ↔ both false (agent's default — currently Ask)
+// Doggy product wire form:
+//   "auto"           ↔ full tool allow (yolo); preferred spelling
+//   "always-approve" ↔ parse-only alias of full allow
+//   "ask"/"default"  ↔ prompt-for-tools at shell resolve (pager product
+//                      surface only offers Auto; see PERMISSION_MODE_CHOICES)
 //
-// Canonical strings match `load_permission_mode`. `supports_preview:
-// false` because toggling YOLO drains the permission queue (unsafe
-// for per-keystroke preview).
-//
-// Adding new modes requires: (1) `PermissionModeKind` variant,
-// (2) `EnumChoice` here, (3) `set_yolo_mode_inner` update,
-// (4) `load_permission_mode` arm, (5) tests. `Plan` is excluded —
-// it lives on its own `plan_mode` setting.
+// Classifier auto_mode is retired — never paired with product "auto".
+// `supports_preview: false` because full-allow drains the permission queue.
 // ---------------------------------------------------------------------------
 
-// Doggy: only Auto (full tool auto-run). Plan is a separate session form.
+// Doggy: only Auto (full tool auto-run). Goal is a separate session form.
 const PERMISSION_MODE_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "auto",
         display: "Auto",
-        description: "Tools auto-run without permission prompts. Pair with Plan mode (Shift+Tab) when you want plan-only edits.",
+        description: "Tools auto-run without permission prompts (default full permission). Shift+Tab cycles Auto ↔ Goal.",
     },
 ];
 
@@ -723,10 +717,9 @@ pub fn default_settings() -> Vec<SettingMeta> {
             category: SettingCategory::Agent,
             owner: SettingOwner::Shell,
             label: "Permission mode",
-            description: "Default uses the agent's built-in behavior; \
-                          Ask prompts for each tool action; \
-                          Auto uses an LLM classifier for risky tools; \
-                          Always approve grants all permissions automatically.",
+            description: "Auto (default): tools auto-run without permission prompts \
+                          (full allow, same as always-approve). \
+                          Ask/Default: prompt for tool actions when exposed.",
             keywords: &[
                 "permission",
                 "approve",
@@ -735,12 +728,12 @@ pub fn default_settings() -> Vec<SettingMeta> {
                 "always",
                 "ask",
                 "auto",
-                "classifier",
                 "tool",
-                "danger",
+                "full",
+                "allow",
             ],
             kind: SettingKind::Enum {
-                default: "ask",
+                default: "auto",
                 choices: PERMISSION_MODE_CHOICES,
                 supports_preview: false,
             },
@@ -1181,14 +1174,16 @@ pub fn default_settings() -> Vec<SettingMeta> {
         // PAGER-owned, ACP-mediated. Reads from
         // `PagerLocalSnapshot.plan_mode_active`. Default "off" matches
         // `AgentView::new`'s `plan_mode_active = false`.
+        // Plan product mode removed — setting retained only as off-only dead key
+        // for config compat; UI label does not offer Plan as a live product mode.
         SettingMeta {
             key: "plan_mode",
             category: SettingCategory::Agent,
             owner: SettingOwner::Pager,
-            label: "Plan mode",
-            description: "When on, the agent summarises a plan before running tools or making edits.",
+            label: "Plan mode (removed)",
+            description: "Plan mode has been removed. Use Goal (Shift+Tab or /goal) for acceptance-criteria driven work.",
             keywords: &[
-                "plan", "mode", "agent", "summary", "approval", "review", "session",
+                "plan", "mode", "removed", "goal", "session",
             ],
             kind: SettingKind::Enum {
                 default: "off",
@@ -1196,7 +1191,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
                 supports_preview: false,
             },
             restart_required: false,
-            hidden_in_minimal: false,
+            hidden_in_minimal: true,
         },
         // SHELL-owned startup-time settings (restart_required: true).
         // The running pager doesn't re-read these mid-session.
@@ -1369,15 +1364,16 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "contextual_hints.plan_mode",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
-            label: "Plan mode",
-            description: "Suggest plan mode (Shift+Tab) when your prompt looks like a \
-                          planning request.",
-            keywords: &["plan", "mode", "nudge", "shift+tab", "hint"],
+            label: "Goal mode nudge",
+            description: "Suggest Goal (Shift+Tab or /goal) when your prompt looks like a \
+                          multi-step objective.",
+            keywords: &["goal", "mode", "nudge", "shift+tab", "hint"],
             kind: SettingKind::Bool {
-                default: ui_default.contextual_hints.plan_mode.unwrap_or(true),
+                // Default off — Plan product mode is removed; avoid Plan-mode messaging.
+                default: false,
             },
             restart_required: false,
-            hidden_in_minimal: false,
+            hidden_in_minimal: true,
         },
         SettingMeta {
             key: "contextual_hints.image_input",

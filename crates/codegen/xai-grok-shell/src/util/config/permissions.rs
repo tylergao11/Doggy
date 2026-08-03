@@ -7,15 +7,20 @@ pub use xai_grok_telemetry::enums::PermissionMode;
 
 /// Parse a `permission_mode` canonical string to `PermissionMode`.
 ///
-/// Valid values: `"always-approve"` → `AlwaysApprove`, `"auto"` → `Auto`,
-/// `"ask"` / `"default"` → `Ask`.
+/// Valid values:
+/// - `"always-approve"` / `"auto"` → `AlwaysApprove`
+/// - `"ask"` / `"default"` → `Ask`
+///
+/// **Doggy product:** the old classifier tier was removed. UI/settings only
+/// persist `"auto"`, meaning full tool auto-run (no per-tool prompts). Map
+/// both `"auto"` and `"always-approve"` to [`PermissionMode::AlwaysApprove`]
+/// so a rebuilt binary that rewrites config to `permission_mode = "auto"`
+/// still fully allows tools instead of re-arming the classifier + prompts.
+///
 /// Unknown strings fall back to `Ask` (safe direction — no YOLO on garbage).
-/// The `"ask"` and `"default"` arms are explicit so a future `Default` variant
-/// is a one-line change without touching the catch-all.
 pub fn parse_permission_mode_canonical(mode_str: &str) -> PermissionMode {
     match mode_str {
-        "always-approve" => PermissionMode::AlwaysApprove,
-        "auto" => PermissionMode::Auto,
+        "always-approve" | "auto" => PermissionMode::AlwaysApprove,
         "ask" => PermissionMode::Ask,
         "default" => PermissionMode::Ask,
         _ => PermissionMode::Ask,
@@ -24,12 +29,14 @@ pub fn parse_permission_mode_canonical(mode_str: &str) -> PermissionMode {
 
 /// Canonical `[ui] permission_mode` string for a resolved [`PermissionMode`].
 ///
-/// Inverse of [`parse_permission_mode_canonical`] for the real variants, so
+/// Doggy product wire form: full allow is always spelled `"auto"`
+/// (`"always-approve"` is a legacy alias accepted on **parse** only).
+/// Round-trip holds for the preferred spelling:
 /// `parse_permission_mode_canonical(permission_mode_canonical_str(m)) == m`.
 pub fn permission_mode_canonical_str(mode: PermissionMode) -> &'static str {
     match mode {
-        PermissionMode::AlwaysApprove => "always-approve",
-        PermissionMode::Auto => "auto",
+        // Full allow — product name is "auto" (≡ always-approve).
+        PermissionMode::AlwaysApprove | PermissionMode::Auto => "auto",
         PermissionMode::Ask => "ask",
     }
 }
@@ -173,42 +180,21 @@ pub fn effective_yolo_for_launch(
     )
 }
 
-/// Whether this launch should start in **auto** permission mode (LLM/heuristic
-/// classifier — not always-approve). CLI `--permission-mode auto` beats config.
-/// Mutually exclusive with effective yolo (yolo / `--yolo` wins if both requested).
+/// Whether this launch should start in **classifier** permission mode.
 ///
-/// `remote_permission_mode` same contract as [`effective_yolo_for_launch`].
+/// **Doggy product:** the classifier tier is retired. Product string `"auto"`
+/// means full allow (see [`parse_permission_mode_canonical`] /
+/// [`effective_yolo_for_launch`]). This function always returns `false` so no
+/// launch path can re-arm classifier prompting under the product `"auto"` name.
+///
+/// Arguments are retained for call-site compatibility and are intentionally
+/// unused.
 pub fn effective_auto_for_launch(
-    cli_always_approve: bool,
-    cli_permission_mode: Option<&str>,
-    remote_permission_mode: Option<&str>,
+    _cli_always_approve: bool,
+    _cli_permission_mode: Option<&str>,
+    _remote_permission_mode: Option<&str>,
 ) -> bool {
-    // Feature gate (default ON): when the auto permission-mode feature is
-    // disabled, Auto is inert — never launch into it regardless of CLI/config,
-    // so the classifier never wires. See `resolve_auto_permission_mode_enabled`.
-    if !crate::util::config::auto_permission_mode_enabled_from_disk() {
-        return false;
-    }
-    // Explicit --yolo without a competing --permission-mode → not auto.
-    if cli_always_approve && cli_permission_mode.is_none() {
-        return false;
-    }
-    let yolo = effective_yolo_for_launch(
-        cli_always_approve,
-        cli_permission_mode,
-        remote_permission_mode,
-    );
-    if yolo.yolo {
-        return false;
-    }
-    // --yolo + --permission-mode auto: prefer yolo only when mode is full bypass.
-    if cli_always_approve && matches!(cli_permission_mode, Some("auto")) {
-        return false;
-    }
-    if let Some(mode) = cli_permission_mode {
-        return mode == "auto";
-    }
-    load_permission_mode(remote_permission_mode).is_auto()
+    false
 }
 
 /// Whether a session should activate the **auto** permission mode: the feature
@@ -234,8 +220,8 @@ fn resolve_effective_yolo(
 ) -> bool {
     if let Some(mode) = cli_permission_mode {
         // Explicit --permission-mode on the CLI always wins for this launch.
-        // Only the two "always approve everything" variants produce YOLO.
-        matches!(mode, "bypassPermissions" | "always-approve")
+        // Doggy: "auto" is full allow (classifier removed), same as always-approve.
+        matches!(mode, "bypassPermissions" | "always-approve" | "auto")
     } else if cli_always_approve {
         true
     } else {
@@ -312,9 +298,10 @@ mod tests {
 
     #[test]
     fn resolve_permission_mode_remote_only() {
+        // Doggy: "auto" is full allow (not the old classifier).
         assert_eq!(
             resolve_permission_mode(None, Some("auto")),
-            PermissionMode::Auto,
+            PermissionMode::AlwaysApprove,
         );
         assert_eq!(
             resolve_permission_mode(None, Some("always-approve")),
@@ -389,7 +376,8 @@ mod tests {
         );
         assert_eq!(
             parse_permission_mode_canonical("auto"),
-            PermissionMode::Auto,
+            PermissionMode::AlwaysApprove,
+            "Doggy: auto == full allow (classifier removed)",
         );
         assert_eq!(parse_permission_mode_canonical("ask"), PermissionMode::Ask,);
         // "default" maps to Ask; a future `Default` variant changes only this arm.
@@ -420,15 +408,15 @@ mod tests {
     #[test]
     fn resolve_permission_mode_ui_precedence_and_canonicalization() {
         let cases: &[(&str, PermissionMode, &str)] = &[
-            // Primary key, canonicalized.
+            // Primary key. Full allow always re-spells as product wire form "auto".
             (
                 "[ui]\npermission_mode = \"always-approve\"\n",
                 PermissionMode::AlwaysApprove,
-                "always-approve",
+                "auto",
             ),
             (
                 "[ui]\npermission_mode = \"auto\"\n",
-                PermissionMode::Auto,
+                PermissionMode::AlwaysApprove,
                 "auto",
             ),
             (
@@ -445,7 +433,7 @@ mod tests {
             (
                 "[ui]\napproval_mode = \"always-approve\"\n",
                 PermissionMode::AlwaysApprove,
-                "always-approve",
+                "auto",
             ),
             (
                 "[ui]\napproval_mode = \"ask\"\n",
@@ -455,7 +443,7 @@ mod tests {
             (
                 "[ui]\nyolo = true\n",
                 PermissionMode::AlwaysApprove,
-                "always-approve",
+                "auto",
             ),
             ("[ui]\nyolo = false\n", PermissionMode::Ask, "ask"),
             // Precedence: permission_mode wins over legacy keys.
@@ -470,11 +458,11 @@ mod tests {
                 PermissionMode::Ask,
                 "ask",
             ),
-            // No permission keys → product soft-default AlwaysApprove.
+            // No permission keys → product soft-default full allow → "auto".
             (
                 "[ui]\ntheme = \"groknight\"\n",
                 PermissionMode::AlwaysApprove,
-                "always-approve",
+                "auto",
             ),
         ];
         for (toml_str, expected_mode, expected_canonical) in cases {
@@ -544,7 +532,13 @@ mod tests {
                 false,
                 "acceptEdits is not full yolo",
             ),
-            (false, Some("auto"), true, false, "auto is not full yolo"),
+            (
+                false,
+                Some("auto"),
+                true,
+                true,
+                "Doggy: auto is full yolo (classifier removed)",
+            ),
             (
                 false,
                 Some("bypassPermissions"),
@@ -654,16 +648,19 @@ mod tests {
 
     #[test]
     fn effective_auto_for_launch_cli_auto_not_yolo() {
-        // This function is feature-gated; force the gate ON (and serialize with
-        // the other env-sensitive gate tests) so the auto-activation paths run.
+        // Doggy product: classifier tier removed — `"auto"` is full allow
+        // (yolo), so the classifier auto path never activates from CLI.
         let _g = crate::util::config::resolve::AUTO_PERMISSION_MODE_ENV_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         unsafe { std::env::set_var("GROK_AUTO_PERMISSION_MODE", "1") };
-        assert!(effective_auto_for_launch(false, Some("auto"), None));
+        assert!(
+            !effective_auto_for_launch(false, Some("auto"), None),
+            "Doggy: --permission-mode auto is full allow, not classifier auto"
+        );
         assert!(
             !effective_auto_for_launch(true, Some("auto"), None),
-            "--yolo beats auto"
+            "--yolo also does not enable classifier auto"
         );
         assert!(!effective_auto_for_launch(
             false,

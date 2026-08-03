@@ -23,4 +23,3 @@ uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-xai-test-utils = { workspace = true }

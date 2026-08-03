@@ -1130,8 +1130,11 @@ pub(crate) async fn persist_permission_mode_and_notify(
     persist: PermissionModePersist,
     tx: AcpAgentTx,
 ) -> TaskResult {
+    // Doggy product: `"auto"` means full tool auto-run (yolo), not the old
+    // classifier tier. ACP `auto_mode` must stay false so the agent does not
+    // re-arm permission prompts after a rebuild rewrites config to `"auto"`.
     let enabled = canonical == "auto" || canonical == "always-approve";
-    let auto_mode = canonical == "auto";
+    let auto_mode = false;
     let config_str: &'static str = canonical;
     let disk_result = xai_grok_shell::util::config::update_config(|cfg| {
             cfg.ui.permission_mode = Some(config_str.to_string());

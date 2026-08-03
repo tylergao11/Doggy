@@ -714,31 +714,48 @@ pub struct DashboardState {
 }
 
 /// Mode staged for the next agent the dashboard spawns.
-/// Doggy product surface: Plan ↔ Auto only.
+/// Doggy product surface: Auto ↔ Goal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DashboardDispatchMode {
-    /// Full auto-run tools (product "Auto"). Default for new agents.
+    /// Ordinary chat; full tool permission. Default for new agents.
     #[default]
     Auto,
-    Plan,
-    /// Deprecated alias of [`Self::Auto`].
+    /// Run until goal verification (acceptance criteria) passes; full tool permission.
+    Goal,
+    /// Deprecated aliases of [`Self::Auto`] (legacy names collapsed).
     AlwaysApprove,
-    /// Deprecated alias of [`Self::Auto`] (old "Normal"/ask).
     Normal,
+    /// Retired Plan product mode — cycles as Auto.
+    Plan,
 }
 
 impl DashboardDispatchMode {
-    /// Advance Plan ↔ Auto.
+    /// Advance Auto → Goal → Auto.
     pub fn cycle(self) -> Self {
         match self {
-            Self::Plan => Self::Auto,
-            Self::Auto | Self::AlwaysApprove | Self::Normal => Self::Plan,
+            Self::Goal => Self::Auto,
+            Self::Auto | Self::AlwaysApprove | Self::Normal | Self::Plan => Self::Goal,
         }
     }
 
-    /// Whether this mode auto-approves tools.
+    /// Whether this mode auto-runs tools with full permission.
     pub fn is_auto(self) -> bool {
-        !matches!(self, Self::Plan)
+        true
+    }
+
+    pub fn product_label(self) -> &'static str {
+        match self {
+            Self::Goal => "Goal",
+            Self::Auto | Self::AlwaysApprove | Self::Normal | Self::Plan => "Auto",
+        }
+    }
+
+    pub fn to_session_mode(self) -> xai_grok_tools::types::SessionMode {
+        use xai_grok_tools::types::SessionMode;
+        match self {
+            Self::Goal => SessionMode::Goal,
+            Self::Auto | Self::AlwaysApprove | Self::Normal | Self::Plan => SessionMode::Default,
+        }
     }
 }
 

@@ -1,5 +1,5 @@
-//! Plan-nudge trigger: detects planning keywords typed into the prompt so the
-//! pager can hint that Shift+Tab cycles into plan mode first.
+//! Goal-nudge trigger: detects multi-step / planning keywords so the pager can
+//! hint that Shift+Tab cycles into Goal (acceptance-criteria driven).
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -41,7 +41,7 @@ fn plan_chord_label() -> String {
         .to_ascii_lowercase()
 }
 
-/// Build the "Planning? Check out plan mode via {chord}" tip, seen-gated to
+/// Build the "Multi-step goal? Use Goal via {chord}" tip, seen-gated to
 /// [`PLAN_NUDGE_SEEN_CAP`] shows per session (in-memory).
 pub fn plan_nudge_tip() -> EphemeralTip {
     let theme = Theme::current();
@@ -53,8 +53,9 @@ pub fn plan_nudge_tip() -> EphemeralTip {
     EphemeralTip::new(
         PLAN_NUDGE_KEY,
         Line::from(vec![
-            Span::styled("Planning? Check out plan mode via ", dim),
+            Span::styled("Multi-step goal? Switch to Goal via ", dim),
             Span::styled(plan_chord_label(), chord),
+            Span::styled(" or /goal", dim),
         ]),
     )
     .with_session_seen_cap(PLAN_NUDGE_SEEN_KEY, PLAN_NUDGE_SEEN_CAP)

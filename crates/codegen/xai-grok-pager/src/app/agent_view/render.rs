@@ -2164,14 +2164,23 @@ impl AgentView {
                 bold: false,
             });
         }
-        if self.session.is_yolo() && !effective_plan {
+        let effective_goal = self.goal_mode_pending.unwrap_or(self.goal_mode_active);
+        if effective_goal && !effective_plan {
+            mode_flags_vec.push(PromptFlag {
+                text: "⚡goal",
+                color: Some(theme.warning),
+                bold: false,
+            });
+        } else if self.session.is_yolo() && !effective_plan {
+            // Default full-permission Auto posture (Always-approve is not a
+            // separate product tier).
             mode_flags_vec.push(PromptFlag {
                 text: "auto",
                 color: None,
                 bold: false,
             });
         }
-        if self.auto_flag_visible(effective_plan) {
+        if self.auto_flag_visible(effective_plan) && !effective_goal {
             mode_flags_vec.push(PromptFlag {
                 text: "auto",
                 color: Some(theme.accent_system),

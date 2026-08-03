@@ -779,6 +779,10 @@ fn extract_yolo_mode_change(json: &serde_json::Value) -> Option<bool> {
 /// `yolo_mode`. Without this, a stale connect-time `auto_mode` capability would be
 /// injected into later `session/new` requests, re-enabling Auto after the user opted
 /// out. Returns `None` when the notification doesn't change auto state.
+///
+/// **Doggy product:** string `"auto"` means full tool allow (≡ always-approve),
+/// **not** the retired classifier tier. Deriving from `permission_mode` never
+/// re-arms classifier `auto_mode`.
 fn extract_auto_mode_change(json: &serde_json::Value) -> Option<bool> {
     let method = json.get("method")?.as_str()?;
     if method != "x.ai/yolo_mode_changed" {
@@ -789,8 +793,8 @@ fn extract_auto_mode_change(json: &serde_json::Value) -> Option<bool> {
         return Some(b);
     }
     match params.get("permission_mode").and_then(|v| v.as_str()) {
-        Some("auto") => Some(true),
-        Some("always-approve" | "ask" | "default") => Some(false),
+        // Product full-allow spellings — classifier stays off.
+        Some("auto" | "always-approve" | "ask" | "default") => Some(false),
         _ => None,
     }
 }
@@ -3304,18 +3308,17 @@ mod tests {
         assert_eq!(extract_auto_mode_change(&pv(payload)), Some(false));
     }
     /// Branch 2: with no explicit flag, derive from `permission_mode`.
+    /// Doggy: product `"auto"` is full allow — never arms classifier auto.
     #[test]
     fn extract_auto_mode_change_derives_from_permission_mode() {
-        let payload = r#"{"jsonrpc":"2.0","method":"x.ai/yolo_mode_changed","params":{"permission_mode":"auto"}}"#;
-        assert_eq!(extract_auto_mode_change(&pv(payload)), Some(true));
-        for mode in ["ask", "always-approve", "default"] {
+        for mode in ["auto", "ask", "always-approve", "default"] {
             let payload = format!(
                 r#"{{"jsonrpc":"2.0","method":"x.ai/yolo_mode_changed","params":{{"permission_mode":"{mode}"}}}}"#
             );
             assert_eq!(
                 extract_auto_mode_change(&pv(&payload)),
                 Some(false),
-                "permission_mode={mode} must clear auto"
+                "permission_mode={mode} must clear classifier auto"
             );
         }
     }

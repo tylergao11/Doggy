@@ -21,7 +21,7 @@ pub struct UpdateGoalInput {
         deserialize_with = "crate::types::schema::deserialize_lenient_option_bool"
     )]
     #[schemars(
-        description = "Set to true ONLY when the goal is fully achieved. This ends goal mode. Use together with `message` to include a completion summary."
+        description = "Set to true when every Exec mark on the plan's dual-column Acceptance checklist is [x] and you claim the criteria hold. The harness rejects this if any Exec is still [ ], then runs independent audit which sets Audit marks. Use together with `message` for a completion summary."
     )]
     pub completed: Option<bool>,
 
@@ -135,6 +135,9 @@ pub enum RejectReason {
     /// In-flight short-circuit but the orchestration snapshot
     /// vanished mid-flight.
     InFlightOrchestrationVanished,
+    /// `completed: true` but the dual-column Acceptance checklist still
+    /// has unchecked **Exec** marks (or the section is missing).
+    ExecChecklistIncomplete,
 }
 
 impl RejectReason {
@@ -151,6 +154,7 @@ impl RejectReason {
             Self::OrchestrationVanished => "goal_update_no_orchestration",
             Self::StatusChangedDuringClassifier => "goal_update_status_changed",
             Self::InFlightOrchestrationVanished => "goal_update_in_flight_orchestration_vanished",
+            Self::ExecChecklistIncomplete => "goal_update_exec_checklist_incomplete",
         }
     }
 }

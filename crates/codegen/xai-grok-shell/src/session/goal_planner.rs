@@ -492,6 +492,21 @@ pub(crate) async fn run_goal_planner(
         );
     }
 
+    // Ensure dual-column Exec|Audit checklist exists (1:1 with numbered ACs).
+    match crate::session::goal_acceptance_checklist::ensure_dual_checklist_on_disk(inputs.plan_file)
+    {
+        Ok(true) => tracing::info!(
+            plan_file = %plan_file_str,
+            "goal planner: synthesized dual Acceptance checklist from numbered criteria"
+        ),
+        Ok(false) => {}
+        Err(e) => tracing::warn!(
+            plan_file = %plan_file_str,
+            error = %e,
+            "goal planner: failed to ensure dual Acceptance checklist"
+        ),
+    }
+
     let latency_ms = started.elapsed().as_millis() as u64;
     emit_event(Event::GoalPlannerCompleted {
         attempt: inputs.attempt,
@@ -1054,10 +1069,7 @@ mod tests {
 
     #[test]
     fn planner_prompt_pins_objective_fidelity_and_environment_evidence_contract() {
-        // The optional risks section and the must-have-fidelity /
-        // capturable-evidence rules are load-bearing for the
-        // planner↔verifier contract; pin them so a template edit can't
-        // silently drop them.
+        // Risks section + must-have fidelity remain load-bearing.
         assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("## Risks / Contradictions"));
         assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("must-have"));
         assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("capturable"));
@@ -1067,19 +1079,23 @@ mod tests {
     /// contract targets: re-inflated scope or a single holistic end-to-end gate).
     #[test]
     fn planner_prompt_pins_anti_inflation_and_atomic_criteria() {
-        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("do NOT invent scope"));
         assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("atomic and independently checkable"));
-        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("holistic end-to-end gate"));
-        // A defining mechanic of a named artifact is requested, not "unrequested"
-        // scope, so the carve-out keeps it out of Non-goals.
-        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("it is requested, so it stays here"));
+        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("holistic end-to-end"));
+        // A defining mechanic of a named artifact stays in criteria, not Non-goals.
+        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("it stays here"));
     }
 
-    /// Pin the static-check fallback and the durable-evidence-to-audit contract.
+    /// Pin static/structural observation path + content-only auditor contract
+    /// (not "verifiers AUDIT implementer self-test evidence").
     #[test]
-    fn planner_prompt_pins_static_fallback_and_audit_evidence() {
-        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("Static / structural fallback"));
-        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("the verifiers AUDIT that evidence"));
+    fn planner_prompt_pins_static_fallback_and_content_audit() {
+        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("static/structural fallback"));
+        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("Static / structural checks"));
+        assert!(
+            GOAL_PLANNER_PROMPT_TEMPLATE
+                .contains("auditor judges **content outcomes**, not implementer self-tests")
+        );
+        assert!(!GOAL_PLANNER_PROMPT_TEMPLATE.contains("the verifiers AUDIT that evidence"));
     }
 
     /// Pin the outcomes-not-architecture contract: the frozen plan must not
@@ -1092,42 +1108,51 @@ mod tests {
     }
 
     /// Pin the gating-vs-best-effort split: a small gating set decides pass/fail
-    /// and best-effort `evidence` steps must not deny completion on their own.
+    /// and optional `evidence` steps do not replace content observation.
     #[test]
     fn planner_prompt_pins_gating_vs_evidence_split() {
         assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("these are the GATING set"));
-        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("must NOT deny completion"));
-    }
-
-    /// Pin the minimal-honest-evidence path for headless-unobservable behavior:
-    /// no mandated capture ritual/oracle, only artifact-exists + shipped units.
-    #[test]
-    fn planner_prompt_pins_minimal_honest_path_for_unobservable_behavior() {
-        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("MINIMAL honest path"));
         assert!(
-            GOAL_PLANNER_PROMPT_TEMPLATE.contains("verifier will then\n  rightly call theater")
+            GOAL_PLANNER_PROMPT_TEMPLATE.contains("never as `gating`")
+                || GOAL_PLANNER_PROMPT_TEMPLATE.contains("never as `gating` — they do not replace")
+        );
+        assert!(
+            GOAL_PLANNER_PROMPT_TEMPLATE.contains("do not replace content observation")
+                || GOAL_PLANNER_PROMPT_TEMPLATE.contains("optional corroboration")
         );
     }
 
-    /// Pin the testable-structure guidance (separate logic from I/O so
-    /// tests drive the real shipped code), and that it stays design
-    /// guidance, not an acceptance criterion.
+    /// Pin the honest headless fallback: static/structural content bar when
+    /// interactive launch cannot run — not a capture-for-auditor ritual.
+    #[test]
+    fn planner_prompt_pins_minimal_honest_path_for_unobservable_behavior() {
+        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("honest fallback"));
+        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("static/structural fallback"));
+        assert!(
+            GOAL_PLANNER_PROMPT_TEMPLATE
+                .contains("core shipped logic correct in source")
+                || GOAL_PLANNER_PROMPT_TEMPLATE.contains("artifact present")
+        );
+        assert!(!GOAL_PLANNER_PROMPT_TEMPLATE.contains("rightly call theater"));
+    }
+
+    /// Pin implementation approach as design guidance, not acceptance.
     #[test]
     fn planner_prompt_requires_testable_structure_guidance() {
         assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("## Implementation approach"));
-        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("easy to test"));
         assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("NOT an acceptance criterion"));
     }
 
-    /// Pin the `## Task checklist` contract: the planner emits `- [ ]`
-    /// checkbox steps (code-change only) that `goal_next_step` mines for
-    /// the per-turn nudge, and the checklist is HOW guidance, never part
-    /// of the judged contract.
+    /// Dual-column Acceptance checklist is required; Task checklist is tactics.
     #[test]
     fn planner_prompt_requires_task_checklist_section() {
+        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("## Acceptance checklist"));
+        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("| Exec | Audit | Criterion |"));
         assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("## Task checklist"));
-        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("unchecked box"));
-        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("never part of the judged contract"),);
+        assert!(
+            GOAL_PLANNER_PROMPT_TEMPLATE.contains("dual gate")
+                || GOAL_PLANNER_PROMPT_TEMPLATE.contains("dual-column")
+        );
     }
 
     /// Pin the visual/interactive guidance: gamedev/UI goals must be
@@ -1192,13 +1217,12 @@ mod tests {
 
     #[test]
     fn planner_prompt_requires_shared_verification_plan_section() {
-        // The `## Verification plan` is the shared implementer↔verifier
-        // procedure (the bias-reduction mechanism): pin both that the
-        // section is required and that it is framed as observable
-        // checks rather than free-text "it works".
+        // Verification plan: how an independent auditor observes content
+        // criteria (not an implementer self-test ritual).
         assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("## Verification plan"));
-        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("implementer"));
+        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("independent auditor"));
         assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("observations that MUST be"));
+        assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("content outcomes"));
     }
 
     /// The planner must instruct verification-plan output paths to use the

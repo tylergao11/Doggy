@@ -223,17 +223,21 @@ in a given mode by default, use `/settings` → **Default screen mode**, or set
 /fullscreen
 ```
 
-### `/plan`
+### `/goal`
 
-Enter plan mode.
+Start Goal mode with an objective (acceptance-criteria driven; runs until independent audit passes).
 
 ```
-/plan [description]
+/goal <objective>
 ```
+
+### `/plan` (removed)
+
+Plan mode has been removed. Prefer `/goal <objective>` or Shift+Tab to Goal.
 
 ### `/view-plan`
 
-Open the current saved plan preview. Aliases: `/show-plan`, `/plan-view`.
+If a session still has a leftover plan file, open its preview. Aliases: `/show-plan`, `/plan-view`. Plan mode itself is removed.
 
 ```
 /view-plan

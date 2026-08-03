@@ -29,7 +29,6 @@ uuid = { workspace = true, features = ["v4"] }
 # Mock HTTP server for actor / request_task integration tests.
 axum = { workspace = true }
 # Shared SSE generators for the happy-path mock payloads.
-xai-grok-test-support = { workspace = true }
 # `start_paused = true` for deterministic timeout testing; `net` for
 # `TcpListener::bind` in the mock server harness.
 tokio = { workspace = true, features = [

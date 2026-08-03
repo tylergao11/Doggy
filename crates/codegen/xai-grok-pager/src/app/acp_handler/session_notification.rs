@@ -1355,14 +1355,18 @@ pub(super) fn detect_plan_mode_change(update: &acp::SessionUpdate, agent: &mut A
         return false;
     };
     let mode = SessionMode::from_id(cmu.current_mode_id.0.as_ref());
-    let was_active = agent.plan_mode_active;
-    let now_active = mode.is_plan();
-    agent.plan_mode_active = now_active;
+    // Plan mode deleted — always clear plan flags.
+    agent.plan_mode_active = false;
     agent.plan_mode_pending = None;
-    if was_active != now_active {
+    let was_goal = agent.goal_mode_active;
+    let now_goal = mode.is_goal();
+    agent.goal_mode_active = now_goal;
+    agent.goal_mode_pending = None;
+    if was_goal != now_goal {
         tracing::info!(
-            mode_id = % cmu.current_mode_id.0, plan_active = now_active,
-            "Plan mode state updated (from CurrentModeUpdate)"
+            mode_id = % cmu.current_mode_id.0,
+            goal_active = now_goal,
+            "Session mode updated (from CurrentModeUpdate)"
         );
     }
     true

@@ -27,7 +27,7 @@ pub(crate) const MAX_READ_BYTES: usize = 8 * 1024;
 /// buffer reaches the cap, the trailing potentially-incomplete line
 /// is dropped so a bullet spanning the cap boundary cannot leak a
 /// half-truncated tail upstream.
-fn read_capped(path: &Path) -> Option<String> {
+pub(crate) fn read_capped(path: &Path) -> Option<String> {
     use std::io::Read;
     let file = std::fs::File::open(path).ok()?;
     let mut buf = Vec::with_capacity(MAX_READ_BYTES.min(4096));
@@ -42,18 +42,19 @@ fn read_capped(path: &Path) -> Option<String> {
     Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
-/// First unchecked `- [ ]` (or `* [ ]` / `+ [ ]`) markdown checkbox in a
-/// plan file; `- [x]` / `- [X]` are skipped, `None` when none remain.
+/// First incomplete work item for the goal continuation nudge.
 ///
-/// Numbered `## Acceptance criteria` are deliberately NOT mined: they are
-/// the judged contract (WHAT must hold), never get checked off, so
-/// surfacing criterion 1 as the "next step" repeated a stale line forever.
+/// Preference order:
+/// 1. First **Exec** `[ ]` in `## Acceptance checklist` (dual-column gate).
+/// 2. First `- [ ]` under `## Task checklist` (optional tactics).
+/// 3. Any other plan checkbox outside Non-goals / Deviations.
 ///
-/// When the plan has a `## Task checklist` section only its checkboxes
-/// are mined; otherwise the whole file is scanned except `## Non-goals`
-/// and `## Deviations` (out-of-scope by definition).
+/// Numbered `## Acceptance criteria` prose is never mined alone (stale forever).
 pub(crate) fn first_unchecked_plan_item(path: &Path) -> Option<String> {
     let body = read_capped(path)?;
+    if let Some(item) = super::goal_acceptance_checklist::first_unchecked_exec(&body) {
+        return Some(item);
+    }
     extract_first_unchecked(&body)
 }
 
@@ -190,19 +191,32 @@ mod tests {
         assert_eq!(extract_first_unchecked(body).as_deref(), Some("real item"),);
     }
 
-    /// Numbered `## Acceptance criteria` are the judged contract, NOT a
-    /// task list, and must NOT be mined as a next step (they never get
-    /// checked off, so criterion 1 would surface forever). Only genuine
-    /// `- [ ]` checkboxes count; a plan of pure numbered criteria yields
-    /// `None` so the caller falls back to the generic todo reminder.
+    /// Numbered `## Acceptance criteria` prose alone is not a next step;
+    /// dual-column Exec marks (via `first_unchecked_plan_item`) are.
     #[test]
     fn plan_does_not_mine_numbered_acceptance_criteria() {
         let numbered = "# Plan\n\n## Acceptance criteria\n\n1. app is created\n2. physics works\n";
         assert!(extract_first_unchecked(numbered).is_none());
-        // Even with an inline `[ ]` glyph, a numbered item lacks the
-        // bullet marker `parse_checkbox_item` requires, so it is ignored.
         let numbered_checkbox = "1. [ ] still a criterion, not a checkbox\n";
         assert!(extract_first_unchecked(numbered_checkbox).is_none());
+    }
+
+    #[test]
+    fn plan_item_prefers_dual_exec_column() {
+        let body = r#"## Acceptance checklist
+| Exec | Audit | Criterion |
+|------|-------|-----------|
+| [ ] | [ ] | dual row first |
+| [x] | [ ] | dual row second |
+
+## Task checklist
+- [ ] tactical step
+"#;
+        let f = write_temp(body);
+        assert_eq!(
+            first_unchecked_plan_item(f.path()).as_deref(),
+            Some("dual row first"),
+        );
     }
 
     /// `parse_checkbox_item` strictly requires the literal `[ ]`

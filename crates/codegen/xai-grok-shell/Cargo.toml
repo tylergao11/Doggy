@@ -196,8 +196,6 @@ serial_test = { workspace = true }
 # Test-only builds expose `env::EnvVarGuard` and the cpu_profile test seams to
 # this crate's test targets.
 xai-grok-shell-base = { workspace = true, features = ["test-support"] }
-xai-grok-test-support = { workspace = true, features = [] }
-xai-test-utils = { workspace = true }
 # `test-util` enables `#[tokio::test(start_paused = true)]` (paused virtual
 # clock with auto-advance) so interval-driven loop tests in `auth::refresh`
 # can assert exact tick counts deterministically without real-time sleep.

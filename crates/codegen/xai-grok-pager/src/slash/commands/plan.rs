@@ -1,14 +1,9 @@
-//! `/plan` -- enter plan mode.
-//!
-//! `/plan` enters plan mode. `/plan <description>` enters plan mode and starts
-//! a turn with the description after the mode switch completes.
-//!
-//! Use `/view-plan` to open the current saved plan preview.
+//! `/plan` — Plan mode removed; redirect to Goal.
 
-use crate::app::actions::{Action, PlanModeKind};
+use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 
-/// Enter plan mode.
+/// Former plan-mode entry; now points users at Goal.
 pub struct PlanCommand;
 
 impl SlashCommand for PlanCommand {
@@ -17,7 +12,7 @@ impl SlashCommand for PlanCommand {
     }
 
     fn description(&self) -> &str {
-        "Enter plan mode"
+        "Plan mode removed — use /goal <objective> or Shift+Tab for Goal"
     }
 
     fn session_scoped(&self) -> bool {
@@ -25,13 +20,11 @@ impl SlashCommand for PlanCommand {
     }
 
     fn offered_when_session_less(&self) -> bool {
-        // The dashboard offers `/plan` to start the next spawned agent in
-        // plan mode (intercepted in `dispatch_dashboard_dispatch_slash`).
         true
     }
 
     fn usage(&self) -> &str {
-        "/plan [description]"
+        "/plan (removed; use /goal)"
     }
 
     fn takes_args(&self) -> bool {
@@ -39,14 +32,19 @@ impl SlashCommand for PlanCommand {
     }
 
     fn arg_placeholder(&self) -> Option<&str> {
-        Some("[description]")
+        Some("[ignored]")
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
         let trimmed = args.trim();
+        // Route description into Goal when provided; otherwise toast-only path
+        // via SetPlanMode which already says plan is removed.
         if trimmed.is_empty() {
-            return CommandResult::Action(Action::SetPlanMode(PlanModeKind::On));
+            return CommandResult::Action(Action::SetPlanMode(
+                crate::app::actions::PlanModeKind::Off,
+            ));
         }
+        // EnterGoal-style: set Goal mode then prompt with objective.
         CommandResult::Action(Action::EnterPlanMode {
             description: Some(trimmed.to_string()),
         })
@@ -57,137 +55,43 @@ impl SlashCommand for PlanCommand {
 mod tests {
     use super::*;
     use crate::acp::model_state::ModelState;
+    use crate::app::actions::PlanModeKind;
     use crate::app::bundle::BundleState;
     use crate::settings::PagerLocalSnapshot;
 
-    fn make_ctx_inactive_plan_mode<'a>(
-        models: &'a ModelState,
-        bundle: &'a BundleState,
-    ) -> CommandExecCtx<'a> {
+    fn make_ctx<'a>(models: &'a ModelState, bundle: &'a BundleState) -> CommandExecCtx<'a> {
         CommandExecCtx {
             models,
             session_id: None,
             bundle_state: bundle,
             screen_mode: crate::app::ScreenMode::Inline,
-            pager_state: PagerLocalSnapshot {
-                plan_mode_active: false,
-                ..PagerLocalSnapshot::default()
-            },
+            pager_state: PagerLocalSnapshot::default(),
         }
     }
 
-    fn make_ctx_active_plan_mode<'a>(
-        models: &'a ModelState,
-        bundle: &'a BundleState,
-    ) -> CommandExecCtx<'a> {
-        CommandExecCtx {
-            models,
-            session_id: None,
-            bundle_state: bundle,
-            screen_mode: crate::app::ScreenMode::Inline,
-            pager_state: PagerLocalSnapshot {
-                plan_mode_active: true,
-                ..PagerLocalSnapshot::default()
-            },
-        }
-    }
-
-    /// `/plan` (no args, not in plan mode) → `SetPlanMode(On)`.
     #[test]
-    fn no_args_not_in_plan_dispatches_set_plan_mode_on() {
-        let cmd = PlanCommand;
+    fn no_args_dispatches_set_plan_mode_off_toast_path() {
         let models = ModelState::default();
         let bundle = BundleState::default();
-        let mut ctx = make_ctx_inactive_plan_mode(&models, &bundle);
-        match cmd.run(&mut ctx, "") {
-            CommandResult::Action(Action::SetPlanMode(kind)) => {
-                assert_eq!(
-                    kind,
-                    PlanModeKind::On,
-                    "`/plan` (no args, not in plan mode) must dispatch SetPlanMode(On)"
-                );
-            }
-            other => panic!("expected Action::SetPlanMode, got {other:?}"),
+        let mut ctx = make_ctx(&models, &bundle);
+        match PlanCommand.run(&mut ctx, "") {
+            CommandResult::Action(Action::SetPlanMode(PlanModeKind::Off)) => {}
+            other => panic!("expected SetPlanMode(Off) removal path, got {other:?}"),
         }
     }
 
-    /// `/plan` (no args, already in plan mode) → idempotent `SetPlanMode(On)`.
     #[test]
-    fn no_args_already_in_plan_dispatches_set_plan_mode_on() {
-        let cmd = PlanCommand;
+    fn with_description_still_routes_through_enter_plan_action() {
+        // Dispatcher converts EnterPlanMode into a toast-only removal path
+        // (dispatch_enter_plan_mode no longer activates Plan).
         let models = ModelState::default();
         let bundle = BundleState::default();
-        let mut ctx = make_ctx_active_plan_mode(&models, &bundle);
-        match cmd.run(&mut ctx, "") {
-            CommandResult::Action(Action::SetPlanMode(kind)) => {
-                assert_eq!(kind, PlanModeKind::On);
-            }
-            other => panic!("expected Action::SetPlanMode, got {other:?}"),
-        }
-    }
-
-    /// Whitespace-only → treated as no args.
-    #[test]
-    fn whitespace_only_arg_not_in_plan_dispatches_set_plan_mode_on() {
-        let cmd = PlanCommand;
-        let models = ModelState::default();
-        let bundle = BundleState::default();
-        let mut ctx = make_ctx_inactive_plan_mode(&models, &bundle);
-        match cmd.run(&mut ctx, "   ") {
-            CommandResult::Action(Action::SetPlanMode(kind)) => {
-                assert_eq!(kind, PlanModeKind::On);
-            }
-            other => panic!("expected SetPlanMode for whitespace-only arg, got {other:?}"),
-        }
-    }
-
-    /// `/plan <description>` → `EnterPlanMode` with description.
-    #[test]
-    fn with_description_keeps_enter_plan_mode_when_not_in_plan() {
-        let cmd = PlanCommand;
-        let models = ModelState::default();
-        let bundle = BundleState::default();
-        let mut ctx = make_ctx_inactive_plan_mode(&models, &bundle);
-        match cmd.run(&mut ctx, "Refactor the auth flow") {
+        let mut ctx = make_ctx(&models, &bundle);
+        match PlanCommand.run(&mut ctx, "do the thing") {
             CommandResult::Action(Action::EnterPlanMode { description }) => {
-                assert_eq!(
-                    description.as_deref(),
-                    Some("Refactor the auth flow"),
-                    "`/plan <desc>` must dispatch EnterPlanMode with the description"
-                );
+                assert_eq!(description.as_deref(), Some("do the thing"));
             }
-            other => panic!("expected Action::EnterPlanMode, got {other:?}"),
-        }
-    }
-
-    /// `/plan <description>` when already in plan mode still emits
-    /// `EnterPlanMode`; the dispatcher owns the idempotent mode handling.
-    #[test]
-    fn with_description_already_in_plan_keeps_enter_plan_mode() {
-        let cmd = PlanCommand;
-        let models = ModelState::default();
-        let bundle = BundleState::default();
-        let mut ctx = make_ctx_active_plan_mode(&models, &bundle);
-        match cmd.run(&mut ctx, "something") {
-            CommandResult::Action(Action::EnterPlanMode { description }) => {
-                assert_eq!(description.as_deref(), Some("something"));
-            }
-            other => panic!("expected EnterPlanMode, got {other:?}"),
-        }
-    }
-
-    /// Whitespace is trimmed from the description.
-    #[test]
-    fn with_description_trims_whitespace() {
-        let cmd = PlanCommand;
-        let models = ModelState::default();
-        let bundle = BundleState::default();
-        let mut ctx = make_ctx_inactive_plan_mode(&models, &bundle);
-        match cmd.run(&mut ctx, "  hello world  ") {
-            CommandResult::Action(Action::EnterPlanMode { description }) => {
-                assert_eq!(description.as_deref(), Some("hello world"));
-            }
-            other => panic!("expected EnterPlanMode, got {other:?}"),
+            other => panic!("expected EnterPlanMode action for desc, got {other:?}"),
         }
     }
 }

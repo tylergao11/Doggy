@@ -1240,6 +1240,12 @@ pub struct AgentView {
     /// The cycle logic uses `plan_mode_pending.unwrap_or(plan_mode_active)`
     /// so rapid Shift+Tab presses advance correctly without waiting for ACP.
     pub(crate) plan_mode_pending: Option<bool>,
+    /// Goal resident posture (Shift+Tab → Goal). Confirmed via
+    /// `CurrentModeUpdate` with mode id `goal`.
+    pub(crate) goal_mode_active: bool,
+    /// Optimistic goal-mode state set immediately on Shift+Tab.
+    /// Cleared when `detect_plan_mode_change()` (mode update handler) confirms.
+    pub(crate) goal_mode_pending: Option<bool>,
     /// Session mode to apply once this agent's ACP session exists. Set when
     /// the agent is spawned from the dashboard with `/plan` active (the
     /// session does not exist yet, so the mode can't be sent immediately).

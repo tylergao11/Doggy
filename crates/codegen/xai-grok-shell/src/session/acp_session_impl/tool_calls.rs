@@ -2745,23 +2745,24 @@ mod plan_mode_edit_gate_tests {
             content: "x".into(),
         })
     }
-    /// Grok edit tools are plan-file-only while plan mode is active — the
-    /// enforcement that makes plan mode read-only even under always-approve.
+    /// Product Plan mode is deleted: `is_active()` is hard-false, so the edit
+    /// gate always Allows even when internal state was flipped to Active.
     #[test]
     fn grok_edits_outside_plan_file_rejected() {
         let t = active_tracker();
+        assert!(!t.is_active(), "product write-gate predicate stays dead");
         assert_eq!(
             gate(&t, &search_replace("/tmp/src/main.rs")),
-            PlanEditGate::RejectNonPlanFile
+            PlanEditGate::Allow,
+            "product-dead plan gate must not reject non-plan edits"
         );
         assert_eq!(
             gate(&t, &write("/tmp/README.md")),
-            PlanEditGate::RejectNonPlanFile,
-            "grok tools get no markdown exception — plan file only"
+            PlanEditGate::Allow,
+            "product-dead plan gate must not reject non-plan edits"
         );
     }
-    /// The carve-out and the permission bypass share `should_auto_approve_edit`,
-    /// so the plan file itself stays editable.
+    /// Plan-file path is allowed (and so is every other path with product gate off).
     #[test]
     fn plan_file_edit_allowed() {
         let t = active_tracker();
@@ -2774,8 +2775,7 @@ mod plan_mode_edit_gate_tests {
             PlanEditGate::Allow
         );
     }
-    /// `apply_patch` carries a placeholder access path, never the plan file:
-    /// always rejected in plan mode (conservative).
+    /// `apply_patch` is also allowed when the product plan gate is dead.
     #[test]
     fn apply_patch_rejected_in_plan_mode() {
         use xai_grok_tools::implementations::codex::apply_patch::ApplyPatchInput;
@@ -2787,7 +2787,8 @@ mod plan_mode_edit_gate_tests {
                     patch: String::new()
                 })
             ),
-            PlanEditGate::RejectNonPlanFile
+            PlanEditGate::Allow,
+            "product-dead plan gate must not reject apply_patch"
         );
     }
     /// Non-edit tools are never gated — they flow to the normal permission

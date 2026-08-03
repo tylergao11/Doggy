@@ -228,6 +228,8 @@ impl AgentView {
             question_scroll_region: None,
             plan_mode_active: false,
             plan_mode_pending: None,
+            goal_mode_active: false,
+            goal_mode_pending: None,
             deferred_session_mode: None,
             pending_extensions_fetch: false,
             in_dashboard_overlay: false,

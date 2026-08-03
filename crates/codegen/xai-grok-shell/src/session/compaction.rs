@@ -41,9 +41,9 @@ fn prefire_lead_percent() -> u64 {
         .and_then(|v| v.trim().parse::<u64>().ok())
         .unwrap_or(DEFAULT_PREFIRE_LEAD_PERCENT)
 }
-/// Cheap fingerprint of a conversation prefix for prefire NOTE₁ validity. A
+/// Cheap fingerprint of a conversation prefix for prefire NOTE鈧?validity. A
 /// mismatch means the prefix changed (edit / rewind / branch) since pass-1, so
-/// the cached NOTE₁ no longer summarizes the current prefix and must be dropped.
+/// the cached NOTE鈧?no longer summarizes the current prefix and must be dropped.
 fn fingerprint_prefix(items: &[ConversationItem]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -65,7 +65,7 @@ fn fingerprint_prefix(items: &[ConversationItem]) -> u64 {
 /// Outcome of a background prefire pass-1 run, recorded on the
 /// `session.prefire_pass1` span as `compaction_prefire_outcome`.
 /// [`PrefireOutcome::as_str`] values are stable telemetry keys
-/// (telemetry/dashboards key off them) — don't rename the strings.
+/// (telemetry/dashboards key off them) 鈥?don't rename the strings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PrefireOutcome {
     Cached,
@@ -100,7 +100,7 @@ struct PrefirePass1Run {
     note1_chars: Option<usize>,
 }
 impl From<PrefireOutcome> for PrefirePass1Run {
-    /// A run that exited before splitting/sampling — outcome only.
+    /// A run that exited before splitting/sampling 鈥?outcome only.
     fn from(outcome: PrefireOutcome) -> Self {
         Self {
             outcome,
@@ -228,7 +228,7 @@ impl SessionActor {
         let start_pct = threshold.saturating_sub(prefire_lead_percent());
         xai_token_estimation::exceeds_threshold(estimated_total, cw, start_pct as u8)
     }
-    /// Background pass-1: summarize the ~95% prefix → NOTE₁ and cache it for a
+    /// Background pass-1: summarize the ~95% prefix 鈫?NOTE鈧?and cache it for a
     /// later pass-2 apply. Always releases the in-flight guard. Spawned via
     /// `spawn_local` from the turn loop; reads a conversation snapshot and does
     /// not mutate session state. The span makes speculative pass-1 spend
@@ -278,7 +278,7 @@ impl SessionActor {
         {
             tracing::info!(
                 target : "two_pass",
-                "two_pass: DEBUG GROK_DEBUG_TWO_PASS_FAIL_PASS1 — prefire pass1 produces no cache"
+                "two_pass: DEBUG GROK_DEBUG_TWO_PASS_FAIL_PASS1 鈥?prefire pass1 produces no cache"
             );
             return PrefireOutcome::DebugFailPass1.into();
         }
@@ -339,9 +339,9 @@ impl SessionActor {
         self.compaction.prefire.store(cache);
         attempted(PrefireOutcome::Cached, Some(note1_chars))
     }
-    /// Pass-2 apply: if a valid cached NOTE₁ exists for the current conversation,
-    /// summarize (NOTE₁ + recent tail + special prompt) → final summary and
-    /// return its `CompactOutput`. `None` → caller runs the single-pass path.
+    /// Pass-2 apply: if a valid cached NOTE鈧?exists for the current conversation,
+    /// summarize (NOTE鈧?+ recent tail + special prompt) 鈫?final summary and
+    /// return its `CompactOutput`. `None` 鈫?caller runs the single-pass path.
     ///
     /// **telemetry / `session.compact_inner` latency:** the returned `CompactOutput`
     /// stream timings are what land on `compaction_ttft_ms` /
@@ -437,7 +437,7 @@ pub(crate) struct AutoCompactTriggerInfo {
 }
 /// Why auto-compaction was suppressed after a deterministic failure.
 /// [`SuppressReason::as_str`] is a stable telemetry value (BQ/OTLP/dashboards key
-/// off it) — don't rename the strings.
+/// off it) 鈥?don't rename the strings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum SuppressReason {
     CreditBlock,
@@ -457,12 +457,12 @@ impl SuppressReason {
         }
     }
     /// Suppression scope for this reason:
-    /// - `size | schema` → [`SUPPRESS_STICKY`]: retrying the same conversation
+    /// - `size | schema` 鈫?[`SUPPRESS_STICKY`]: retrying the same conversation
     ///   can't help; cleared only on a context-budget change.
-    /// - `credit_block | auth` → [`SUPPRESS_UNTIL_SUCCESS`]: re-sending fails the
-    ///   same way every turn until the user acts, so don't clear per-turn — wait
+    /// - `credit_block | auth` 鈫?[`SUPPRESS_UNTIL_SUCCESS`]: re-sending fails the
+    ///   same way every turn until the user acts, so don't clear per-turn 鈥?wait
     ///   for an actual successful model call (a `200` proves recovery).
-    /// - `other` → [`SUPPRESS_TURN`]: optimistic per-turn retry.
+    /// - `other` 鈫?[`SUPPRESS_TURN`]: optimistic per-turn retry.
     fn suppress_state(self) -> u8 {
         match self {
             SuppressReason::Size | SuppressReason::Schema => SUPPRESS_STICKY,
@@ -472,8 +472,8 @@ impl SuppressReason {
     }
 }
 /// Splice the preserved prefix (`conversation[0..prefix_len]`) onto the compacted
-/// suffix, dropping the suffix's leading System and — if the prefix already has an
-/// AGENTS.md item — its re-injected AGENTS.md too (else the model sees it twice).
+/// suffix, dropping the suffix's leading System and 鈥?if the prefix already has an
+/// AGENTS.md item 鈥?its re-injected AGENTS.md too (else the model sees it twice).
 /// Returns `Err(compacted_history)` unchanged when `prefix_len` is 0 or out of range.
 fn preserve_inherited_prefix(
     conversation: &[ConversationItem],
@@ -573,7 +573,7 @@ impl SessionActor {
         }
     }
     /// Tag the current `session.compact` span with `mode` (and `detail`, for
-    /// `segments`) — the A/B variant key for grouping outcomes in telemetry.
+    /// `segments`) 鈥?the A/B variant key for grouping outcomes in telemetry.
     fn record_compaction_variant(&self) {
         let mode = self.compaction.compaction_mode;
         let span = tracing::Span::current();
@@ -680,7 +680,7 @@ impl SessionActor {
                     "out of credits or over your spending limit. Add credits and retry."
                 }
                 SuppressReason::Auth => {
-                    "authentication problem — re-authenticate using /login and retry."
+                    "authentication problem 鈥?re-authenticate using /login and retry."
                 }
                 SuppressReason::Size => "this conversation is too large to compact.",
                 SuppressReason::Schema => "this conversation can't be summarized.",
@@ -1852,10 +1852,10 @@ impl SessionActor {
         })
     }
     /// On a model change, clear stale suppression the switch can resolve (sticky
-    /// size/schema — the new window may fit — and a stale per-turn `other`), then
+    /// size/schema 鈥?the new window may fit 鈥?and a stale per-turn `other`), then
     /// compact now if the new window is smaller. Account-state suppression
-    /// (credit/auth → `SUPPRESS_UNTIL_SUCCESS`) is left intact — a switch can't
-    /// restore credits or fix auth — and short-circuits the compaction.
+    /// (credit/auth 鈫?`SUPPRESS_UNTIL_SUCCESS`) is left intact 鈥?a switch can't
+    /// restore credits or fix auth 鈥?and short-circuits the compaction.
     pub(crate) async fn maybe_compact_on_model_switch(self: &Arc<Self>) {
         let Some(prev) = self.compaction.previous_model.take() else {
             return;
@@ -1999,7 +1999,7 @@ impl SessionActor {
     /// the exact ConversationItem list sent to the compaction model plus the
     /// summary (or final error) it produced. The file rides on
     /// the post-turn session archive to cloud storage via the existing per-turn upload
-    /// pipeline — no separate upload path is needed.
+    /// pipeline 鈥?no separate upload path is needed.
     ///
     /// `created_at` is taken from the caller-supplied `started_at` (captured
     /// before the retry loop) rather than `Utc::now()` here, so transient
@@ -2298,6 +2298,7 @@ mod inline_auto_compact_flow_tests {
                 )),
             )),
             goal_enabled: false,
+            goal_posture: std::sync::atomic::AtomicBool::new(false),
             goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
             goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
             goal_tracker: Arc::new(parking_lot::Mutex::new(
@@ -2525,7 +2526,7 @@ mod inline_auto_compact_flow_tests {
             .await;
     }
     /// A model switch clears suppression the switch (or the fresh budget-driven
-    /// trigger) can resolve — sticky size/schema and a stale per-turn `other` — so
+    /// trigger) can resolve 鈥?sticky size/schema and a stale per-turn `other` 鈥?so
     /// the gates re-evaluate against the new window. Account-state credit/auth is
     /// covered by `model_switch_keeps_account_state_suppression`.
     #[tokio::test(flavor = "current_thread")]
@@ -2562,7 +2563,7 @@ mod inline_auto_compact_flow_tests {
             .await;
     }
     /// A model switch resets the context budget, so it clears sticky (size/schema)
-    /// suppression — but NOT account-state suppression (credit/auth →
+    /// suppression 鈥?but NOT account-state suppression (credit/auth 鈫?
     /// SUPPRESS_UNTIL_SUCCESS), which a switch can't resolve. It must also not
     /// proactively compact while that suppression is active (the switch-to-smaller
     /// window path would otherwise fire a doomed compaction).
@@ -2670,7 +2671,7 @@ mod inline_auto_compact_flow_tests {
         format!("http://{addr}")
     }
     /// A deterministic failure suppresses auto-compaction only on the AUTO
-    /// path — never for a bare manual `/compact`.
+    /// path 鈥?never for a bare manual `/compact`.
     #[tokio::test(flavor = "current_thread")]
     async fn bare_manual_compact_failure_does_not_suppress_auto() {
         use crate::session::compaction_config::SUPPRESS_NONE;
@@ -2863,7 +2864,7 @@ mod inline_auto_compact_flow_tests {
     fn classify_suppress_reason_maps_error_text() {
         let classify = SessionActor::classify_suppress_reason;
         assert_eq!(
-            classify("caller does not have permission … spending-limit reached"),
+            classify("caller does not have permission 鈥?spending-limit reached"),
             SuppressReason::CreditBlock
         );
         assert_eq!(
@@ -2903,7 +2904,7 @@ mod inline_auto_compact_flow_tests {
             SuppressReason::Other
         );
     }
-    /// `SuppressReason::as_str` is the stable telemetry wire value — BQ/OTLP and
+    /// `SuppressReason::as_str` is the stable telemetry wire value 鈥?BQ/OTLP and
     /// dashboards key off these exact strings. Lock them so a rename can't break monitoring.
     #[test]
     fn suppress_reason_as_str_is_stable() {
@@ -3173,7 +3174,7 @@ mod inline_auto_compact_flow_tests {
         }
     }
     /// Primary scenario: remote settings shrinks the context window mid-session.
-    /// The shell's last-known token count (214K) exceeds the new limit (200K) —
+    /// The shell's last-known token count (214K) exceeds the new limit (200K) 鈥?
     /// should_compact_on_error must return true so the session can recover.
     #[tokio::test(flavor = "current_thread")]
     async fn test_compact_on_error_triggers_when_tokens_exceed_new_window() {
@@ -3190,7 +3191,7 @@ mod inline_auto_compact_flow_tests {
             .await;
     }
     /// When tracked tokens are within the new limit, the error was not a context
-    /// overflow — do not compact.
+    /// overflow 鈥?do not compact.
     #[tokio::test(flavor = "current_thread")]
     async fn test_compact_on_error_no_trigger_when_tokens_within_new_window() {
         let local = tokio::task::LocalSet::new();
@@ -3205,7 +3206,7 @@ mod inline_auto_compact_flow_tests {
             })
             .await;
     }
-    /// If the proxy hasn't been updated yet, model_metadata is None — must be
+    /// If the proxy hasn't been updated yet, model_metadata is None 鈥?must be
     /// a no-op for backwards compatibility.
     #[tokio::test(flavor = "current_thread")]
     async fn test_compact_on_error_noop_without_model_metadata() {
@@ -3302,7 +3303,7 @@ mod inline_auto_compact_flow_tests {
                 let updates_path = session_dir.join("updates.jsonl");
                 std::fs::write(&updates_path, "{}\n").unwrap();
                 let result = actor.get_transcript_path();
-                assert!(result.is_some(), "file exists → Some");
+                assert!(result.is_some(), "file exists 鈫?Some");
                 assert!(
                     result.as_ref().unwrap().ends_with("updates.jsonl"),
                     "path should end with updates.jsonl, got: {:?}",

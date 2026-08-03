@@ -1,12 +1,12 @@
-//! `/auto` — switch to Auto form (tools auto-run).
+//! `/auto` — switch to Auto form (ordinary chat, full tool permission).
 //!
-//! Doggy has two forms only: Plan and Auto. `/auto` exits plan mode and
-//! enables full tool auto-run (no per-tool permission prompts).
+//! Doggy resident postures: Plan / Auto / Goal. `/auto` exits plan mode and
+//! uses full tool permission (the product default).
 
 use crate::app::actions::{Action, PermissionModeKind};
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 
-/// Enter Auto mode (full tool auto-run).
+/// Enter Auto mode (ordinary chat with full tool permission).
 pub struct AutoCommand;
 
 impl SlashCommand for AutoCommand {
@@ -15,7 +15,7 @@ impl SlashCommand for AutoCommand {
     }
 
     fn description(&self) -> &str {
-        "Switch to Auto mode (tools auto-run, no permission prompts)"
+        "Switch to Auto mode (ordinary chat, full tool permission)"
     }
 
     fn usage(&self) -> &str {

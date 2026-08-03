@@ -1223,6 +1223,7 @@ pub(crate) async fn spawn_session_actor(
         turn_prompt_mode: turn_prompt_mode.clone(),
         plan_mode: plan_mode.clone(),
         goal_enabled,
+        goal_posture: std::sync::atomic::AtomicBool::new(false),
         goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
         goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
         goal_tracker,

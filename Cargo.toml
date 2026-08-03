@@ -33,7 +33,6 @@ members = [
     "crates/codegen/xai-grok-pager",
     "crates/codegen/xai-grok-pager-bin",
     "crates/codegen/xai-grok-pager-minimal",
-    "crates/codegen/xai-grok-pager-pty-harness",
     "crates/codegen/xai-grok-pager-render",
     "crates/codegen/xai-grok-paths",
     "crates/codegen/xai-grok-plugin-marketplace",
@@ -47,7 +46,6 @@ members = [
     "crates/codegen/xai-grok-shell-session-support",
     "crates/codegen/xai-grok-subagent-resolution",
     "crates/codegen/xai-grok-telemetry",
-    "crates/codegen/xai-grok-test-support",
     "crates/codegen/xai-grok-tools",
     "crates/codegen/xai-grok-tools-api",
     "crates/codegen/xai-grok-update",
@@ -73,7 +71,6 @@ members = [
     "crates/common/xai-computer-hub-sdk",
     "crates/common/xai-grok-compaction",
     "crates/common/xai-interjection-core",
-    "crates/common/xai-test-utils",
     "crates/common/xai-tool-protocol",
     "crates/common/xai-tool-runtime",
     "crates/common/xai-tool-types",
@@ -297,7 +294,6 @@ xai-grok-shell = { path = "crates/codegen/xai-grok-shell" }
 xai-grok-shell-base = { path = "crates/codegen/xai-grok-shell-base" }
 xai-grok-shell-session-support = { path = "crates/codegen/xai-grok-shell-session-support" }
 xai-grok-telemetry = { path = "crates/codegen/xai-grok-telemetry" }
-xai-grok-test-support = { path = "crates/codegen/xai-grok-test-support" }
 xai-grok-tools = { path = "crates/codegen/xai-grok-tools" }
 xai-grok-tools-api = { path = "crates/codegen/xai-grok-tools-api" }
 xai-grok-version = { path = "crates/codegen/xai-grok-version" }
@@ -312,7 +308,6 @@ xai-ratatui-inline = { path = "crates/codegen/xai-ratatui-inline" }
 xai-ratatui-textarea = { path = "crates/codegen/xai-ratatui-textarea" }
 xai-sqlite-journal = { path = "crates/codegen/xai-sqlite-journal" }
 xai-system-power = { path = "crates/codegen/xai-system-power" }
-xai-test-utils = { path = "crates/common/xai-test-utils" }
 xai-token-estimation = { path = "crates/codegen/xai-token-estimation" }
 xai-tool-protocol = { path = "crates/common/xai-tool-protocol" }
 xai-tool-runtime = { path = "crates/common/xai-tool-runtime" }

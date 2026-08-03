@@ -124,10 +124,10 @@ Actions that affect the agent session, available from the agent screen.
 | `Ctrl+M` | Agent screen | Open the model picker / switch model |
 | `Ctrl+M` | Prompt focused | Toggle multiline input mode |
 | `Ctrl+C` | Agent screen | Cancel the current turn (or clear non-empty draft first; see Escape table) |
-| `Ctrl+O` | Agent screen | Toggle always-approve (YOLO) mode |
+| `Ctrl+O` | Agent screen | Toggle full tool permission (default on) |
 | `Ctrl+S` | Agent screen | Open the session picker (resume a previous session) |
 | `Ctrl+;` (alt: `Ctrl+'`) | Agent screen | Toggle the prompt queue pane (when non-empty). **Local macOS** VS Code family only: primary **`Ctrl+4`** (`;` / `'` still alts). SSH and non-Mac keep **`Ctrl+;`** / **`Ctrl+'`**. |
-| `Shift+Tab` | Prompt focused | Cycle mode (Normal → Plan → Always-approve) |
+| `Shift+Tab` | Prompt focused | Cycle mode (Auto → Goal) |
 | `Ctrl+G` | Agent screen | Send the current task to the background |
 | `Ctrl+T` | Agent screen | Toggle the todos pane |
 | `Ctrl+B` | Agent screen | Toggle the tasks pane |
@@ -330,7 +330,7 @@ Rewind (idle):    Esc Esc within 800ms (empty prompt + messages)
 Command palette:  Ctrl+P or ?
 Model picker:     Ctrl+M (from scrollback)
 Cancel:           Ctrl+C (see Escape table)
-Always-approve:   Ctrl+O (toggle YOLO)
+Full tool permission:   Ctrl+O (default on; toggle)
 New session:      Ctrl+N (press again, then choose normal/worktree)
 Quit:             Ctrl+Q (or Ctrl+D in VSCode)
 ```

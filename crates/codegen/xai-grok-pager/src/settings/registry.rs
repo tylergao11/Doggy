@@ -236,9 +236,8 @@ pub struct PagerLocalSnapshot {
     pub multiline_mode: bool,
     /// Whether YOLO mode (always-approve) is active on the active agent.
     pub yolo_mode: bool,
-    /// Whether Auto (LLM classifier) mode is active on the active agent.
-    /// Mutually exclusive with `yolo_mode` in practice (yolo wins); read by
-    /// `/auto` so it can toggle off when already on.
+    /// Retired classifier-tier flag. Doggy product `"auto"` is full allow
+    /// (`yolo_mode`); this field stays false on product paths.
     pub auto_mode: bool,
     /// Currently-selected model's display name, or `None` if no catalog
     /// has loaded yet.
@@ -268,9 +267,8 @@ pub struct PagerLocalSnapshot {
     /// Mirrors `AppView::appearance.scrollback.scroll.respect_manual_folds`
     /// at snapshot time.
     pub respect_manual_folds: bool,
-    /// Mirrors `AppView::auto_mode_gate` at snapshot time. When false the
-    /// permission-mode picker hides the "Auto" choice (matches the Shift+Tab
-    /// cycle, which skips Auto when the feature gate is off).
+    /// Legacy classifier feature-gate snapshot. Product `"auto"` (full allow)
+    /// is not gated by this flag.
     pub auto_mode_gate: bool,
     /// `[toolset.ask_user_question].timeout_enabled` mirror (effective TOML
     /// merge, like `show_tips`). `None` = unset in TOML → default `true`.

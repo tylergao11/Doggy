@@ -73,9 +73,8 @@ fn contextual_hints_group_sub_sheet_flow() {
     assert!(matches!(s.mode, SettingsModalMode::Browse));
 }
 
-/// The permission_mode picker hides the "Auto" choice when the auto feature
-/// gate is off (matching the Shift+Tab cycle, which skips Auto when gated),
-/// and shows it when the gate is on. Other choices are unaffected.
+/// Doggy: product permission_mode "auto" is full allow — never hidden by the
+/// retired classifier auto_mode_gate.
 #[test]
 fn effective_enum_choices_hides_auto_for_permission_mode_when_gated_off() {
     let reg = SettingsRegistry::defaults();
@@ -92,12 +91,8 @@ fn effective_enum_choices_hides_auto_for_permission_mode_when_gated_off() {
     };
     let filtered = effective_enum_choices("permission_mode", choices, &gated_off);
     assert!(
-        !filtered.iter().any(|c| c.canonical == "auto"),
-        "Auto must be hidden from the permission_mode picker when the gate is off"
-    );
-    assert!(
-        filtered.iter().any(|c| c.canonical == "ask"),
-        "non-Auto choices must remain"
+        filtered.iter().any(|c| c.canonical == "auto"),
+        "product Auto (full allow) must remain selectable when classifier gate is off"
     );
 
     let gated_on = PagerLocalSnapshot {
@@ -126,8 +121,8 @@ fn effective_enum_choices_hides_auto_for_permission_mode_when_gated_off() {
 }
 
 /// `voice_capture_mode`'s "hold" choice is gated off without key releases and
-/// available with them; "toggle" is never gated. Permission_mode's "auto"
-/// gating is preserved. Pure — no process-global mutation.
+/// available with them; "toggle" is never gated. Product permission_mode "auto"
+/// is never gated (full allow, not classifier).
 #[test]
 fn enum_choice_gated_off_covers_voice_and_permission() {
     // voice "hold": gated iff no key releases.
@@ -150,8 +145,8 @@ fn enum_choice_gated_off_covers_voice_and_permission() {
         true,
         false
     ));
-    // permission_mode "auto": gated iff the auto gate is off.
-    assert!(enum_choice_gated_off(
+    // permission_mode "auto": never gated by classifier auto_mode_gate.
+    assert!(!enum_choice_gated_off(
         "permission_mode",
         "auto",
         false,

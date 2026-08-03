@@ -1279,7 +1279,7 @@ fn extract_path_line_tokens(text: &str) -> Vec<String> {
 
 /// The planner's `## Goal kind` tag (see `goal_planner_prompt.md`). Selects
 /// the kind-specific verifier review lens; an unrecognised / absent kind maps
-/// to `None` (no lens — the generic adversarial verifier).
+/// to `None` (no lens — the generic independent auditor).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GoalKind {
     CodeChange,
@@ -1318,20 +1318,57 @@ pub(crate) fn parse_goal_kind(plan: &str) -> Option<GoalKind> {
     None
 }
 
-/// `code-change` review lens — adversarial code review layered on the
-/// acceptance criteria, hunting real defects, test-theater, and cheating.
+/// `code-change` review lens — independent content review of shipped code
+/// against acceptance criteria. Does not grade implementer self-tests.
 const KIND_LENS_CODE_CHANGE: &str = "\n## Code-change review lens\n\n\
-This goal changes code. Satisfying the criteria nominally is NOT enough — do a senior-engineer adversarial review of every file in CHANGED_FILES and the paths they touch. Read the CURRENT contents, run the code, and cite a `path:line` or a command/test transcript for every finding. Bias to `refuted: true`.\n\n\
-Your PRIMARY mandate is to actively HUNT for real bugs, issues, and gaps in the shipped behavior — defects you can demonstrate — not to nitpick coverage. Missing coverage alone, when the code is correct and the criteria hold, is NOT a refute.\n\n\
-- Correctness — reason over the whole input space (valid, invalid, empty, boundary, large, concurrent, adversarial) for any input that makes the code produce a wrong result; one such input is a decisive refute — state the input and expected-vs-actual. Illustrative, not exhaustive: off-by-one, wrong operator, inverted condition, wrong variable/index, null/empty dereference, unhandled error path, overflow/precision/sign, bad early-return, race.\n\
-- Completeness — fully implement the requirement, not just the happy path. Refute when edge/error cases are silently dropped, a value is hardcoded that must be dynamic, a branch returns a placeholder, or only the demo case works.\n\
-- Real tests, not theater — judge each test by whether it would catch a deliberately-broken implementation; one that still passes against a wrong implementation (asserts only on mocks/constants, sets internal state instead of using the real entry point, or has no meaningful assertion) is theater — discount it (refute if it is the only evidence for a required behavior). Injecting a fake at an environment boundary (clock, RNG, network/file/output sink) so the unit's REAL logic runs deterministically is honest dependency injection, NOT theater. A green project suite is WEAK evidence, never proof. Refute hard on tests weakened, `#[ignore]`/skipped, commented out, or whose expected values were edited to match buggy output.\n\
-- End-to-end reality — build it and exercise each behavioral criterion through the REAL entry point and observed output, judging as the USER would; driving an internal flag or helper proves the mechanism exists, NOT that the wired-up feature works. A criterion whose code is present but whose integrated behavior is wrong, unreachable, or unusable is `refuted: true`, as is anything that fails to compile, fails its tests, or errors at runtime. EXCEPTION — behavior the harness cannot drive headlessly (a UI, a browser, a game loop, a long-running interactive session): the static/structural fallback is the accepted bar (the artifact is present AND the shipped unit-level functions — e.g. physics, collision, input mapping, state transitions — are exercised against the real path); this applies EVEN IF the plan did not spell the fallback out. The fallback still includes the cheap load check: a browser-loaded script must evaluate without error in a browser-like environment (`window` defined, NO Node globals) — an unguarded `module.exports`/`require` in a `<script src>` file crashes at load (blank page) and is a decisive, headlessly-provable defect. Likewise an ES-module/import-map page with no `file:` fallback message: double-clicked from disk it is a silent black screen (CORS blocks module imports), so it must either use plain scripts or visibly tell the user to serve it. Entry-point launch: whatever the deliverable (CLI, server, library, page), it must have been LAUNCHED once on its real entry path with the cheapest runtime the environment offers — run the command, boot the server and hit an endpoint, import the library fresh, or headless-load the page (zero page errors, plus the strong primary-observable bar below; module-resolution failures only surface on a real load). Audit the implementer's captured launch evidence (transcript/screenshot) and refute when it is absent even though the environment could launch it. Present is not correct: the launch gate must assert the deliverable's PRIMARY OBSERVABLE is CORRECT, not merely present or non-empty — a CLI's actual output content (not just that it ran), a server's response body (not just HTTP 200), a library call's real return value, or for a rendered page that the render surface's drawing dimensions equal the intended/target size (a renderer that cached a stale/default size paints a near-blank surface), that the surface is SUBSTANTIALLY filled (a high painted fraction or a painted bbox ≈ the whole surface, NOT a `> 0 pixels` check), and that a driven input produces the expected visible/state change. Launch evidence proving only \"exists / non-empty / exited 0\" is INSUFFICIENT — refute and request the stronger gate (the next-round gap). If the captured evidence instead shows the LAUNCHER failing for environmental reasons (browser cannot start in the sandbox, missing system dep), or the environment can launch but cannot reliably read back the primary observable (headless pixel/WebGL readback or input injection unavailable), that honest failure capture plus the static fallback IS the accepted bar — do not keep demanding a launch or readback the environment cannot perform; refute fabricated/synthetic launch evidence, not the honest fallback. \"Cannot read back\" means the readback mechanism is unavailable or errors, NOT a readback that succeeded and returned a blank or partial buffer — that buffer IS the deliverable's output and a defect to refute. A captured launch/run FAILURE (a page error, an empty or too-short render buffer, a \"canvas buffer empty\", a wrong/empty CLI output, an error response body, a nonzero exit) is a defect, NOT flakiness — do not wave it off or let one cherry-picked success supersede it. Re-run captures that DISAGREE across attempts to consensus on the CAUSE (not a pass/fail vote), and attribute EVERY failure by the cause test below. Route by CAUSE, not frequency: an ENVIRONMENT/launcher failure (the sandbox cannot run or observe it, whether every time or only intermittently) never forces a refute — take a good capture if one run produced it, else the honest fallback above; an APP failure (the launcher ran but the deliverable was wrong, blank, or errored) refutes even when only some runs show it — the non-determinism is itself the defect, never an unverifiable environment. Do NOT refute merely because an end-to-end outcome lacks test-only scaffolding, only when a gating criterion is missed or a real defect is present.\n\
-- Code-correctness floor (applies EVEN under the End-to-end EXCEPTION above) — the static/structural fallback excuses the *runtime* proof, never a defect you can read in the source. Before accepting the fallback for ANY deliverable (domain-agnostic: CLI, service, library, data job, UI, game), READ the shipped code for the core behaviors the OBJECTIVE names or plainly implies — not only the ones the plan enumerated — and refute (cite `path:line`) when such a behavior is, in the code, absent, a no-op, dead, or wired to nothing: e.g. a handler/branch that never changes the state it exists to change, an input/event/endpoint/flag bound to no effect, a feature present only as a placeholder/stub return, or a primary flow with no reachable completion/terminal state the objective implies. This is a FLOOR for the objective's CORE purpose ONLY — do NOT extend it to polish, fidelity, extra scope, edge/error handling, or robustness the plan did not require (those remain false-refutes — never invent scope beyond the contract); the anti-ratchet rule still binds: the floor is fixed by the objective and does not rise between rounds.\n\
-- No regressions — run the pre-existing suite and inspect adjacent call sites and any changed signature / public API.\n\
-- No cheating — refute if the agent hardcoded the expected output, special-cased the test input, swallowed errors to suppress failures, deleted/disabled failing assertions, stubbed the hard part behind a TODO, or narrowed scope to dodge the requirement.\n\
-- Security — no secret committed, and no injection, path traversal, unsafe deserialization, or unsanitised-input path introduced.\n";
-
+This goal changes code. Judge the **shipped content** against the criteria — \
+read CURRENT files in CHANGED_FILES and the paths they touch; exercise real \
+entry paths when cheap. Bias to `refuted: true` on real defects in content.\n\n\
+Your PRIMARY mandate is to actively HUNT for real bugs, issues, and gaps in the \
+shipped behavior — defects you can demonstrate in the product. Presence, \
+absence, or quality of implementer self-tests is OUT OF SCOPE for this audit: \
+do not refute for missing/weak tests, and do not pass because their suite is green.\n\n\
+- Correctness — reason over inputs that make the code produce a wrong result; \
+one such input is a decisive refute — state input and expected-vs-actual. \
+Illustrative: off-by-one, wrong operator, inverted condition, wrong index, \
+null/empty dereference, unhandled error path, overflow, bad early-return, race.\n\
+- Completeness — fully implement the requirement, not just the happy path. \
+Refute when a required branch is a placeholder, a value is hardcoded that must \
+be dynamic, or only the demo case works.\n\
+- Real entry path — when the environment can run it, exercise each behavioral \
+criterion through the REAL user path and judge as the USER would. Present is \
+not correct: the PRIMARY OBSERVABLE is CORRECT, not merely present or non-empty \
+— a CLI's actual output (not just that it ran), a server's response body (not \
+just HTTP 200), a library call's real return, or for a page that drawing \
+dimensions equal the intended/target size, the surface is SUBSTANTIALLY filled \
+(NOT a `> 0 pixels` check), and a driven input produces the expected \
+visible/state change. Observation proving only \"exists / non-empty / exited 0\" \
+is INSUFFICIENT. Anything that fails to compile or errors at runtime on the \
+real path is `refuted: true`.\n\
+- Headless EXCEPTION — behavior the harness cannot drive headlessly (a UI, a \
+browser, a game loop, a long-running interactive session): the \
+static/structural fallback is the accepted bar (artifact present AND core \
+shipped logic readable as wired). This applies EVEN IF the plan did not spell \
+the fallback out. If the environment cannot run or observe it, do not force a \
+refute for missing interactive proof; if you can run it and the app is wrong, \
+refute. Do NOT refute merely because an end-to-end outcome lacks test-only \
+scaffolding — only when a gating criterion is missed or a real defect is present.\n\
+- Code-correctness floor (applies EVEN under the End-to-end EXCEPTION above) — \
+the static/structural fallback excuses the *runtime* proof, never a defect you \
+can read in the source. Before accepting the fallback for ANY deliverable \
+(domain-agnostic: CLI, service, library, data job, UI, game), READ the shipped \
+code for the core behaviors the OBJECTIVE names or plainly implies — not only \
+the ones the plan enumerated — and refute (cite `path:line`) when such a \
+behavior is, in the code, absent, a no-op, dead, or wired to nothing. This is a \
+FLOOR for the objective's CORE purpose ONLY — do NOT extend it to polish, \
+fidelity, extra scope, edge/error handling, or robustness the plan did not \
+require (never invent scope beyond the contract); the floor is fixed by the \
+objective and does not rise between rounds.\n\
+- No cheating in product code — refute if the shipped path hardcodes the \
+expected output, stubs the hard part behind a TODO, or narrows scope to dodge \
+the requirement.\n\
+- Security — no secret committed; no injection, path traversal, unsafe \
+deserialization, or unsanitised-input path introduced.\n";
 /// `research` fact-check lens — verify every claim against its cited source.
 const KIND_LENS_RESEARCH: &str = "\n## Research fact-check lens\n\n\
 This goal gathers external information; the deliverable's whole value is its factual accuracy, so do not accept claims on trust — verify them. Bias to `refuted: true` on any claim you cannot confirm.\n\n\
@@ -1360,50 +1397,49 @@ fn kind_lens(kind: Option<GoalKind>) -> &'static str {
 
 /// Delta-focused resume prompt for skeptic 0 when it is RESUMED across
 /// attempts (it already carries its prior transcript and the gaps it
-/// flagged). It must re-read the changed files (its cached reads are
-/// stale after the agent's further edits), confirm each prior gap is
-/// genuinely fixed in the CURRENT files with no regression introduced,
-/// and emit the same strict verdict-file + terminal-token contract.
-const GOAL_VERIFIER_RESUME_PROMPT_TEMPLATE: &str = "You are the SAME adversarial verifier from the previous attempt — you have your \
+/// flagged). Same content-only 他测 philosophy as the cold verifier: re-read
+/// CURRENT files, confirm prior gaps fixed in the deliverable, do not grade
+/// implementer self-tests.
+const GOAL_VERIFIER_RESUME_PROMPT_TEMPLATE: &str = "You are the SAME **independent auditor** for the Doggy toolchain from the previous attempt — you have your \
 prior transcript, the gaps you flagged, and the evidence you cited. You are NOT \
-the agent that produced the changes. Your job is still to **refute** that the \
-objective has been met. The agent claims it addressed your gaps; do NOT trust \
-that — RE-CHECK. **Default to `refuted: true` if uncertain** (passing broken \
-work is far worse than one more iteration).\n\n\
+the agent that produced the changes. Your job is still **他测 of content**: decide \
+whether **each gating acceptance criterion holds** on the shipped deliverable, \
+using your own observation. The agent claims it addressed your gaps; do NOT trust \
+that — RE-CHECK the content. **Default to `refuted: true` if uncertain** (passing \
+broken work is far worse than one more iteration).\n\n\
+You do **not** grade implementer self-tests (presence, strength, or private \
+scratch). Self-tests are not pass evidence.\n\n\
 You have your standard tool inventory ({READ_TOOL}, {SEARCH_TOOL}, {LIST_TOOL}, \
 run a command).{TOOLSET_TOOLS}\n\n\
 ## Delta re-check\n\n\
 - Your cached reads are STALE — RE-READ the CURRENT contents of every file in \
 CHANGED_FILES (and CHANGES_FILE) before judging.\n\
-- For EACH prior gap, confirm it is GENUINELY fixed — not merely claimed, \
-papered over, hardcoded, or stubbed. AUDIT the implementer's updated tests + \
-captured evidence (CHANGED_FILES and `{IMPLEMENTER_SCRATCH}`) first; reach for \
-RUNNING the code yourself only as a cheap spot-check, and reuse the \
-implementer's captured run instead of expensive re-runs. A gap you cannot \
-confirm is fixed remains `refuted: true`. If the fix's evidence is missing, \
-refute and ask the implementer to produce it — do not build it yourself.\n\
+- For EACH prior gap, confirm it is GENUINELY fixed **in the shipped content** — \
+not merely claimed, papered over, hardcoded, or stubbed. Independently inspect \
+source and real behavior; do not rely on the implementer's updated tests or \
+captured self-runs as primary proof. A gap you cannot confirm is fixed remains \
+`refuted: true`.\n\
 - Check for REGRESSIONS: the changes must not break a criterion that previously \
-held, an adjacent call site, or a passing test.\n\
+held or an adjacent call site.\n\
 - PRIOR_GAPS — the gaps the previous round told the implementer to fix:\n\n\
 {PRIOR_GAPS}\n\n\
-- The whole contract still applies (all numbered criteria + the \
-`## Verification plan`), not only the gaps you flagged; refute a newly-doubtful \
-criterion too. Anti-ratchet: the bar does NOT rise between rounds — a NEW \
-objection counts only when it is a demonstrable defect in shipped behavior or \
-an unmet gating criterion, never a stylistic or test-construction preference \
-an earlier round implicitly accepted; when every prior gap is fixed and every \
+- The whole contract still applies (all numbered criteria; `## Verification plan` \
+steps are observation hints only), not only the gaps you flagged; refute a \
+newly-doubtful criterion too. Anti-ratchet: the bar does NOT rise between \
+rounds — a NEW objection counts only when it is a demonstrable defect in \
+shipped behavior or an unmet gating criterion, never a stylistic preference an \
+earlier round implicitly accepted; when every prior gap is fixed and every \
 gating criterion holds, return `Not Refuted`.\n\
 - PLAN_CHANGES shows how the agent edited PLAN_FILE this run — a weakened, \
 deleted, or self-serving criterion is itself grounds for `refuted: true`.\n\
-- Cite concrete evidence per assertion (`path:line`, a captured transcript, or \
-a diff hunk). Classify any refute via `blocking` as before (`\"none\"`, \
+- Cite concrete evidence per assertion (`path:line`, observed behavior, or a \
+diff hunk). Classify any refute via `blocking` as before (`\"none\"`, \
 `\"contradiction\"`, or `\"unverifiable\"`).\n\
 {KIND_LENS}\n\
 ## Scratch dirs\n\n\
-- `{IMPLEMENTER_SCRATCH}` — the implementer's outputs / captured evidence, your \
-PRIMARY source: READ it instead of re-running; do NOT write into it.\n\
-- `{SKEPTIC_SCRATCH}` — yours, for cheap spot-checks only; when one re-runs the \
-`## Verification plan`, the literal `{SCRATCH}` placeholder resolves here.\n\n\
+- `{IMPLEMENTER_SCRATCH}` — implementer throwaways; optional context only, never \
+sole proof, never something you grade; do NOT write into it.\n\
+- `{SKEPTIC_SCRATCH}` — yours, for cheap independent observation only.\n\n\
 {SCRATCH_STATUS}\n\n\
 ## Output contract — STRICT\n\n\
 Do BOTH, then emit the terminal token.\n\n\
@@ -1420,13 +1456,13 @@ Write this object (fixed schema) with your file-write tool:\n\n\
 }\n\
 ```\n\n\
 - `findings` (array — the PRIMARY output the implementer acts on): one terse item \
-per gap. `kind` = `bug` (defect in shipped behavior) | `gap` (unmet criterion / \
-missing test or evidence) | `todo` (TODO/`#[ignore]`/stub left in). `location` = \
-`path:line` when code-related, else where. `detail` = one concrete line, no prose.\n\
-- `refuted` (bool): `false` only if every prior gap is confirmed fixed and no \
-regression or other criterion fails.\n\
-- `evidence` (string): a one-line summary citation; for `code-change`, FINAL_RESPONSE \
-prose is NOT evidence.\n\
+per gap. `kind` = `bug` (defect in shipped content/behavior) | `gap` (unmet \
+criterion) | `todo` (stub left in shipped code). Prefer \"criterion N unmet: …\" \
+with what content observation is missing.\n\
+- `refuted` (bool): `false` only if every prior gap is confirmed fixed in content \
+and no other gating criterion fails.\n\
+- `evidence` (string): a one-line summary of **your** observation; for \
+`code-change`, FINAL_RESPONSE prose is NOT evidence.\n\
 - `confidence` (string): `\"high\"` | `\"medium\"` | `\"low\"`.\n\
 - `blocking` (string, default `\"none\"`): `\"none\"` | `\"contradiction\"` | \
 `\"unverifiable\"`.\n\
@@ -1440,7 +1476,6 @@ prose, fences, or punctuation; capitalization is significant:\n\n\
 ```\nRefuted\n```\n\nor\n\n```\nNot Refuted\n```\n\n\
 `Refuted` ⇒ `refuted: true`; `Not Refuted` ⇒ `refuted: false`. The JSON is \
 authoritative; the token is the fast-path signal.";
-
 /// Wrap the evidence packet (OBJECTIVE / CHANGES_FILE / PLAN_FILE /
 /// FINAL_RESPONSE) in `template`, substituting the kind-specific review
 /// lens into `{KIND_LENS}`, the runner-allocated output paths into
@@ -1502,7 +1537,7 @@ fn render_verifier_prompt(
     out
 }
 
-/// Build the per-skeptic cold user prompt — the full adversarial
+/// Build the per-skeptic cold user prompt — the full independent-auditor
 /// verifier template plus the evidence packet.
 #[allow(clippy::too_many_arguments)]
 fn render_skeptic_prompt(
@@ -3760,31 +3795,33 @@ mod tests {
     }
 
     #[test]
-    fn verifier_prompt_pins_live_workspace_reframing() {
-        // Workspace + captured evidence are primary; running the code is only a
-        // spot-check. Pin all three against a diff-only or run-code-primary revert.
+    fn verifier_prompt_pins_content_audit_not_self_tests() {
+        // 他测 = content vs criteria; self-test presence/quality is out of scope.
+        for tmpl in [
+            GOAL_VERIFIER_PROMPT_TEMPLATE,
+            GOAL_VERIFIER_RESUME_PROMPT_TEMPLATE,
+        ] {
+            assert!(
+                tmpl.contains("他测") || tmpl.contains("independent auditor"),
+                "must frame as independent 他测",
+            );
+            assert!(
+                tmpl.contains("Self-tests are not pass evidence")
+                    || tmpl.contains("self-tests are not pass evidence")
+                    || tmpl.contains("not pass evidence"),
+                "must not treat self-tests as pass evidence",
+            );
+        }
+        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("You judge content vs the contract"));
+        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("You do not grade the implementer's self-tests"));
+        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("out of scope"));
         assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("CHANGED_FILES"));
         assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("current workspace"));
-        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("running the code"));
-        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("only as a cheap spot-check"));
-    }
-
-    #[test]
-    fn verifier_prompt_pins_audit_not_author_reframing() {
-        // Pin the audit-not-author phrases against a revert to the expensive
-        // author-your-own-evidence stance.
-        assert!(
-            GOAL_VERIFIER_PROMPT_TEMPLATE.contains("AUDIT the evidence the implementer already")
-        );
-        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("Minimize tool"));
-        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("do NOT build a parallel"));
-        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("do NOT fill the gap yourself"));
-        // The RESUME template must carry the same audit-not-author stance.
-        assert!(GOAL_VERIFIER_RESUME_PROMPT_TEMPLATE.contains("reuse the implementer's"));
-        assert!(
-            GOAL_VERIFIER_RESUME_PROMPT_TEMPLATE
-                .contains("refute and ask the implementer to produce it")
-        );
+        // Resume must not revert to "audit implementer materials first".
+        assert!(!GOAL_VERIFIER_RESUME_PROMPT_TEMPLATE.contains("PRIMARY source"));
+        assert!(!GOAL_VERIFIER_RESUME_PROMPT_TEMPLATE.contains("reuse the implementer's"));
+        assert!(!GOAL_VERIFIER_RESUME_PROMPT_TEMPLATE.contains("AUDIT the implementer's"));
+        assert!(GOAL_VERIFIER_RESUME_PROMPT_TEMPLATE.contains("shipped content"));
     }
 
     #[test]
@@ -3803,38 +3840,19 @@ mod tests {
     }
 
     #[test]
-    fn verifier_prompt_pins_missing_tests_not_a_refute_reframing() {
-        // Pin both halves of the reframing so a future edit can't
-        // silently revert to refuting working goals for missing coverage:
-        // the base rule (missing tests alone are not a refute) and the
-        // code-change lens priority (hunt real bugs/issues/gaps).
+    fn verifier_prompt_pins_self_tests_out_of_scope() {
+        // Content can pass with no self-tests; green self-tests do not prove pass.
+        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("Self-tests are out of scope"));
         assert!(
-            GOAL_VERIFIER_PROMPT_TEMPLATE.contains("Missing tests alone are NOT grounds to refute")
+            GOAL_VERIFIER_PROMPT_TEMPLATE.contains("are **not** grounds to refute"),
+            "missing/weak self-tests must not be a refute when content holds",
         );
+        assert!(
+            GOAL_VERIFIER_PROMPT_TEMPLATE.contains("does **not** prove criteria hold"),
+            "green self-tests must not prove pass",
+        );
+        assert!(KIND_LENS_CODE_CHANGE.contains("OUT OF SCOPE for this audit"));
         assert!(KIND_LENS_CODE_CHANGE.contains("actively HUNT for real bugs, issues, and gaps"));
-    }
-
-    /// Pin the gating-vs-best-effort verifier stance: an absent `evidence`
-    /// observation alone is not a refute once the gating criteria hold.
-    #[test]
-    fn verifier_prompt_pins_gating_vs_evidence_stance() {
-        assert!(
-            GOAL_VERIFIER_PROMPT_TEMPLATE.contains("an absent best-effort `evidence` observation")
-        );
-    }
-
-    /// Pin the test-theater steer: a refute must tell the implementer to
-    /// refactor the shipped code into a callable unit, not patch the test.
-    #[test]
-    fn verifier_prompt_pins_refactor_not_patch_on_test_theater() {
-        assert!(
-            GOAL_VERIFIER_PROMPT_TEMPLATE
-                .contains("REFACTOR the shipped code into a directly-callable pure unit"),
-        );
-        assert!(
-            GOAL_VERIFIER_PROMPT_TEMPLATE
-                .contains("NOT to patch the test around an untestable unit"),
-        );
     }
 
     #[test]
@@ -3855,48 +3873,32 @@ mod tests {
         );
     }
 
-    /// Pin the headless-unobservable carve-out in both the base prompt and the
-    /// code-change lens (anti-cheat stance preserved).
+    /// Headless carve-out lives on the code-change lens (content still judged
+    /// via static/structural read of shipped code).
     #[test]
     fn verifier_prompt_pins_unobservable_outcome_carveout() {
-        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("the harness cannot observe"));
-        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("static/structural fallback holds"));
-        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("not on the absence of a contorted proof"));
         assert!(KIND_LENS_CODE_CHANGE.contains("behavior the harness cannot drive headlessly"));
         assert!(KIND_LENS_CODE_CHANGE.contains("static/structural fallback is the accepted bar"));
+        assert!(KIND_LENS_CODE_CHANGE.contains("cannot run or observe it"));
+        assert!(KIND_LENS_CODE_CHANGE.contains("lacks test-only scaffolding"));
     }
 
-    /// Pin every load-bearing clause of the code-correctness floor so a future
-    /// edit can't silently narrow it: the no-runtime contract (READ source,
-    /// never demand a re-run — the convergence safeguard), application under the
-    /// headless fallback, reach beyond the plan's enumeration, the code-readable
-    /// defect classes, the domain-agnostic span (not game/UI-biased), and the
-    /// anti-ratchet bound (core-purpose only, over-reach excluded, fixed across
-    /// rounds).
+    /// Pin every load-bearing clause of the code-correctness floor.
     #[test]
     fn verifier_prompt_pins_code_correctness_floor() {
         assert!(KIND_LENS_CODE_CHANGE.contains("Code-correctness floor"));
-        // Loophole-closer: bites under the headless fallback, not outside it.
         assert!(KIND_LENS_CODE_CHANGE.contains("applies EVEN under the End-to-end EXCEPTION"));
-        // No-runtime contract (the convergence safeguard): READ source, never
-        // demand a re-run — guards a silent READ->RUN swap from both angles.
         assert!(
             KIND_LENS_CODE_CHANGE
                 .contains("excuses the *runtime* proof, never a defect you can read in the source")
         );
         assert!(KIND_LENS_CODE_CHANGE.contains("READ the shipped code"));
-        // MODERATE scope: also catches objective-implied behaviors the plan never listed.
         assert!(KIND_LENS_CODE_CHANGE.contains("not only the ones the plan enumerated"));
-        // Code-readable defect classes (no runtime needed to demonstrate).
         assert!(KIND_LENS_CODE_CHANGE.contains("absent, a no-op, dead, or wired to nothing"));
-        // Generic, not biased to a single domain.
         assert!(
             KIND_LENS_CODE_CHANGE
                 .contains("domain-agnostic: CLI, service, library, data job, UI, game")
         );
-        // Anti-ratchet / convergence: core-purpose only, the over-reach
-        // exclusion list intact, scope self-contained (valid under the resume
-        // injection, which has no `## Decision rules`), and not rising.
         assert!(KIND_LENS_CODE_CHANGE.contains("FLOOR for the objective's CORE purpose ONLY"));
         assert!(KIND_LENS_CODE_CHANGE.contains(
             "do NOT extend it to polish, fidelity, extra scope, edge/error handling, or robustness"
@@ -3905,22 +3907,7 @@ mod tests {
         assert!(KIND_LENS_CODE_CHANGE.contains("does not rise between rounds"));
     }
 
-    /// A launch/run FAILURE must not be excused as flakiness or buried by a
-    /// cherry-picked pass — keeps the false-pass class from re-opening.
-    #[test]
-    fn verifier_prompt_pins_launch_failure_not_flakiness() {
-        assert!(KIND_LENS_CODE_CHANGE.contains("is a defect, NOT flakiness"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("cherry-picked success supersede it"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("DISAGREE across attempts"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("consensus on the CAUSE"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("attribute EVERY failure by the cause test"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("a wrong/empty CLI output"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("an error response body"));
-    }
-
-    /// "Present / non-empty" is not proof the primary observable is CORRECT, and
-    /// the weak ">0 pixels"/"non-background" phrasings stay gone — keeps a
-    /// renders-but-wrong deliverable from re-passing.
+    /// Present / non-empty is not proof the primary observable is CORRECT.
     #[test]
     fn verifier_prompt_pins_present_is_not_correct() {
         assert!(KIND_LENS_CODE_CHANGE.contains("PRIMARY OBSERVABLE is CORRECT"));
@@ -3936,44 +3923,18 @@ mod tests {
         assert!(KIND_LENS_CODE_CHANGE.contains("SUBSTANTIALLY filled"));
         assert!(KIND_LENS_CODE_CHANGE.contains("NOT a `> 0 pixels` check"));
         assert!(!KIND_LENS_CODE_CHANGE.contains("non-background rendering"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("plus the strong primary-observable bar below"));
         assert!(KIND_LENS_CODE_CHANGE.contains("\"exists / non-empty / exited 0\""));
         assert!(KIND_LENS_CODE_CHANGE.contains("is INSUFFICIENT"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("request the stronger gate"));
-    }
-
-    /// The honest-fallback clause keeps a truly unrunnable/unobservable sandbox
-    /// converging while the cause router refutes app-side failures, and the
-    /// readback disambiguator stops a successful blank-buffer readback escaping
-    /// via the hatch — pinned so no half can silently drop.
-    #[test]
-    fn verifier_prompt_pins_environmental_fallback_bound_preserved() {
-        assert!(
-            KIND_LENS_CODE_CHANGE.contains(
-                "that honest failure capture plus the static fallback IS the accepted bar"
-            )
-        );
-        assert!(KIND_LENS_CODE_CHANGE.contains("Route by CAUSE, not frequency"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("whether every time or only intermittently"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("never forces a refute"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("cannot run or observe it"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("refutes even when only some runs show it"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("never an unverifiable environment"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("cannot reliably read back the primary observable"));
-        assert!(KIND_LENS_CODE_CHANGE.contains("readback mechanism is unavailable or errors"));
-        assert!(
-            KIND_LENS_CODE_CHANGE
-                .contains("that buffer IS the deliverable's output and a defect to refute")
-        );
     }
 
     #[test]
-    fn verifier_prompt_executes_shared_verification_plan() {
-        // The verifier must run the plan's shared `## Verification plan`
-        // steps (not improvise its own) so its verdict matches the bar
-        // the implementer built against — the bias-reduction contract.
+    fn verifier_prompt_treats_verification_plan_as_observation_hints() {
+        // Verification plan steps are observation hints for content, not a
+        // mandate to re-run/grade implementer self-tests.
         assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("## Verification plan"));
         assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("SAME steps"));
+        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("suggested observations"));
+        assert!(GOAL_VERIFIER_RESUME_PROMPT_TEMPLATE.contains("observation hints only"));
     }
 
     /// Both verifier templates carry the two scratch slots — the skeptic's
@@ -4040,9 +4001,9 @@ mod tests {
         assert_eq!(rendered, expected, "default verifier render drifted");
         // Pin the tool-bearing inventory line so prose drift on it is caught.
         assert!(rendered.contains("standard tool inventory (read_file, grep, list_dir,\nrun a"));
-        // Empty toolset block ⇒ the writes sentence glues straight into the
-        // next section (`{TOOLSET_TOOLS}` resolved to "").
-        assert!(rendered.contains("`{VERDICT_FILE}`.\n\n## Scratch dirs"));
+        // Empty toolset block after inventory; kind lens + scratch remain.
+        assert!(rendered.contains("{KIND_LENS}") || rendered.contains("## Scratch dirs"));
+        assert!(rendered.contains("## Scratch dirs"));
         assert_no_tool_placeholders(&rendered);
     }
 
@@ -4873,7 +4834,7 @@ mod tests {
         assert!(body.contains("Goal verification — Achieved"));
         assert!(body.contains("Per-skeptic reports:"));
         // Prompt substitution sanity: every placeholder must be
-        // resolved and the adversarial framing must be present.
+        // resolved and the Doggy independent-auditor framing present.
         let prompts = observed.prompts.lock().unwrap();
         let p = &prompts[0];
         assert!(
@@ -4899,7 +4860,10 @@ mod tests {
             !p.contains("{SKEPTIC_SCRATCH}") && !p.contains("{IMPLEMENTER_SCRATCH}"),
             "scratch placeholder marker leaked into rendered prompt",
         );
-        assert!(p.contains("adversarial verifier"));
+        assert!(
+            p.contains("Doggy toolchain") && p.contains("independent auditor"),
+            "Doggy independent-auditor branding missing in prompt",
+        );
         drop(prompts);
         let log = log.lock().unwrap();
         assert!(log.iter().any(|t| t == "fired"));

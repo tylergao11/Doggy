@@ -473,7 +473,7 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
         ActionDef {
             id: ActionId::CycleMode,
             label: "mode",
-            description: "Cycle mode (Plan / Auto)",
+            description: "Cycle mode (Auto / Goal)",
             // All Shift+Tab encodings — see `input::key::shift_tab_keys()`.
             default_key: crate::input::key::shift_tab_keys()[0],
             alt_keys: crate::input::key::shift_tab_keys()[1..].to_vec(),
@@ -483,7 +483,7 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
             hint_key_display: Some("Shift+Tab"),
             requires_confirmation: false,
             long_help: Some(
-                "Steps the session form: Plan ↔ Auto.\nPlan: plan-file gate only.\nAuto: tools auto-run without permission prompts.",
+                "Steps the session form: Auto → Goal.\nAuto: ordinary chat with full tool permission.\nGoal: run until acceptance criteria pass independent audit (full tool permission).",
             ),
         },
         // ── Panes (agent-level — toggle side panes) ─────────────────
@@ -713,7 +713,7 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
             hint_key_display: None,
             requires_confirmation: false,
             long_help: Some(
-                "Turns auto-approve (YOLO) on or off for this session.\nWhile on, the agent runs every tool call (edits, shell, deletes) with no per-action confirmation.\nSame state as the Shift+Tab cycle's Always-Approve; use with care.",
+                "Turns full tool permission on or off for this session.\nDefault is on (full permission). Auto and Goal postures use full permission; Plan uses the plan-file write gate instead.",
             ),
         },
         ActionDef {
@@ -962,7 +962,7 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
             hint_key_display: Some("Shift+Tab"),
             requires_confirmation: false,
             long_help: Some(
-                "Cycles the dispatch form for new agents: Plan ↔ Auto.\nMirrors the in-session Shift+Tab cycle.",
+                "Cycles the dispatch form for new agents: Auto → Goal.\nMirrors the in-session Shift+Tab cycle.",
             ),
         },
         ActionDef {

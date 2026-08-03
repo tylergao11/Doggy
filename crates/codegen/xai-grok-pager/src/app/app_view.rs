@@ -1414,13 +1414,14 @@ impl AppView {
             dashboard.set_voice_visible(enabled);
         }
     }
-    /// Sync the auto permission-mode feature gate into every slash surface.
-    /// `/auto` is hard-hidden when `self.auto_mode_gate` is off; otherwise both
-    /// `/always-approve` and `/auto` stay offered as true toggles. Mirrors
-    /// [`Self::apply_voice_mode_enabled`]. Call after gate flips, startup,
-    /// reconnect, and session create/switch (so new agents inherit the gate).
+    /// Sync permission-mode slash availability into every slash surface.
+    ///
+    /// Doggy: `/auto` is **full tool permission** (product default), not the
+    /// retired classifier tier — always offered (not gated by
+    /// `auto_mode_gate`). Call after startup, reconnect, and session
+    /// create/switch so new agents inherit the surface.
     pub fn sync_permission_mode_slash_gate(&mut self) {
-        let available = self.auto_mode_gate;
+        let available = true;
         for agent in self.agents.values_mut() {
             agent.prompt.set_auto_mode_available(available);
         }

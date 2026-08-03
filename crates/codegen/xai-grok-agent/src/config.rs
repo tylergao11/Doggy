@@ -176,8 +176,6 @@ fn kill_task_tool_config() -> ToolConfig {
 pub fn workspace_grok_build_toolset() -> ToolServerConfig {
     let mut tools = default_grok_build_toolset().tools;
     tools.push((&opencode::OpenCodeWriteTool).into());
-    tools.push((&grok_build::EnterPlanModeTool).into());
-    tools.push((&grok_build::ExitPlanModeTool).into());
     tools.push((&grok_build::AskUserQuestionTool).into());
     tools.push((&grok_build::WebSearchTool).into());
     tools.push((&grok_build::ImageGenTool).into());
@@ -410,8 +408,6 @@ fn grok_build_plan_toolset() -> ToolServerConfig {
             (&search_tool::SearchTool).into(),
             (&use_tool::UseTool).into(),
             (&grok_build::UpdateGoalTool).into(),
-            (&grok_build::EnterPlanModeTool).into(),
-            (&grok_build::ExitPlanModeTool).into(),
             (&grok_build::AskUserQuestionTool).into(),
         ],
         behavior_preset: None,
@@ -437,8 +433,6 @@ fn orchestrator_toolset() -> ToolServerConfig {
             (&search_tool::SearchTool).into(),
             (&use_tool::UseTool).into(),
             (&grok_build::TodoWriteTool).into(),
-            (&grok_build::EnterPlanModeTool).into(),
-            (&grok_build::ExitPlanModeTool).into(),
             (&grok_build::AskUserQuestionTool).into(),
             (&grok_build::UpdateGoalTool).into(),
             (&grok_build::SchedulerCreateTool).into(),
@@ -456,7 +450,7 @@ fn orchestrator_toolset() -> ToolServerConfig {
         behavior_preset: None,
     }
 }
-/// Grok Build + plan mode toolset WITHOUT subagent tools.
+/// Grok Build toolset WITHOUT subagent tools.
 ///
 /// Same as `grok_build_plan_toolset` but excludes `TaskTool`,
 /// `TaskOutputTool`, and `KillTaskTool`. Use this when the shell
@@ -479,8 +473,6 @@ fn grok_build_plan_no_subagents_toolset() -> ToolServerConfig {
             (&search_tool::SearchTool).into(),
             (&use_tool::UseTool).into(),
             (&grok_build::UpdateGoalTool).into(),
-            (&grok_build::EnterPlanModeTool).into(),
-            (&grok_build::ExitPlanModeTool).into(),
             (&grok_build::AskUserQuestionTool).into(),
         ],
         behavior_preset: None,
@@ -1755,14 +1747,17 @@ mod tests {
         let full = workspace_grok_build_toolset();
         let full_ids: std::collections::HashSet<&str> =
             full.tools.iter().map(|t| t.id.as_str()).collect();
-        for present in [
-            ToolConfig::from(&grok_build::LspTool).id,
+        assert!(
+            full_ids.contains(ToolConfig::from(&grok_build::LspTool).id.as_str()),
+            "workspace_grok_build_toolset must ship LspTool"
+        );
+        for removed in [
             ToolConfig::from(&grok_build::EnterPlanModeTool).id,
             ToolConfig::from(&grok_build::ExitPlanModeTool).id,
         ] {
             assert!(
-                full_ids.contains(present.as_str()),
-                "workspace_grok_build_toolset must ship `{present}`"
+                !full_ids.contains(removed.as_str()),
+                "workspace_grok_build_toolset must NOT ship `{removed}` (Plan mode removed)"
             );
         }
     }

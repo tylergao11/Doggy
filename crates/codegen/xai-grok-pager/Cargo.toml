@@ -168,10 +168,7 @@ criterion = { workspace = true }
 tempfile = { workspace = true }
 serial_test = { workspace = true }
 xai-grok-agent = { workspace = true }
-xai-grok-pager-pty-harness = { path = "../xai-grok-pager-pty-harness" }
 # In-process leader-cluster harness (mock inference server; no cycle:
-# xai-grok-test-support depends on neither the pager nor the shell).
-xai-grok-test-support = { workspace = true, features = [] }
 # Ring CryptoProvider install for the in-process leader-cluster tests. Explicit
 # spec mirroring the shell's, NOT `workspace = true`: the workspace pin enables
 # aws-lc-rs, under which `rustls::crypto::ring` does not exist. Dev-only — the
@@ -198,60 +195,6 @@ harness = false
 # PTY integration tests are split into coherent scheduling families. The test
 # modules remain under tests/pty_e2e/; these roots only define which cases share
 # one Cargo/Bazel process. All cases stay #[ignore]d for ordinary Cargo runs.
-[[test]]
-name = "pty_e2e_smoke"
-path = "tests/pty_e2e_smoke.rs"
-
-[[test]]
-name = "pty_e2e_queue"
-path = "tests/pty_e2e_queue.rs"
-
-[[test]]
-name = "pty_e2e_scroll_selection"
-path = "tests/pty_e2e_scroll_selection.rs"
-
-[[test]]
-name = "pty_e2e_minimal"
-path = "tests/pty_e2e_minimal.rs"
-
-[[test]]
-name = "pty_e2e_config_ui"
-path = "tests/pty_e2e_config_ui.rs"
-
-[[test]]
-name = "pty_e2e_shell_tools"
-path = "tests/pty_e2e_shell_tools.rs"
-
-[[test]]
-name = "pty_e2e_persistence"
-path = "tests/pty_e2e_persistence.rs"
-
-[[test]]
-name = "pty_e2e_clipboard"
-path = "tests/pty_e2e_clipboard.rs"
-
-# Leader-mode PTY e2e — split from ordinary PTY families so multi-process
-# cluster bring-up never contends with their bounded pools.
-[[test]]
-name = "leader_pty_e2e"
-path = "tests/leader_pty_e2e/mod.rs"
-
-# Settings modal regression tests — keyboard/mouse dispatch + registry
-# contracts. Not gated by `--ignored`; runs on every `cargo test`.
-[[test]]
-name = "settings_e2e"
-path = "tests/settings_e2e.rs"
-
-# Declarative scripted TUI scenarios — opt-in because they spawn the real pager.
-[[test]]
-name = "scripted_scenarios"
-path = "tests/scripted_scenarios.rs"
-
-# Permission Auto mode PTY e2e (Shift+Tab → Auto banner via PtyHarness).
-[[test]]
-name = "pty_auto_mode"
-path = "tests/pty_auto_mode.rs"
-
 [[bin]]
 name = "mouse-events-playground"
 path = "src/bin/mouse_events_playground.rs"

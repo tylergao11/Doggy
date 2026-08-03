@@ -3,10 +3,10 @@
 use super::*;
 pub(super) fn prompt_mode_from_session_mode_id(session_mode_id: &acp::SessionModeId) -> PromptMode {
     use xai_grok_tools::types::SessionMode;
+    // Plan mode is deleted: every product posture maps to full Agent tools.
+    // Goal posture is tracked via `goal_posture` on the session actor.
     match SessionMode::from_id(session_mode_id.0.as_ref()) {
-        SessionMode::Plan => PromptMode::Plan,
-        SessionMode::Ask => PromptMode::Ask,
-        SessionMode::Default => PromptMode::Agent,
+        SessionMode::Default | SessionMode::Goal => PromptMode::Agent,
     }
 }
 /// Pass-through twin: no toolset in this build carries a plan-gated tool.
@@ -32,69 +32,32 @@ impl SessionActor {
         let prompt_mode = prompt_mode_from_session_mode_id(&session_mode_id);
         *self.current_prompt_mode.lock() = prompt_mode;
         let mode = SessionMode::from_id(session_mode_id.0.as_ref());
-        if mode.is_plan() {
-            let entered = self.plan_mode.lock().enter_pending();
-            if entered {
+        // Goal posture: full tools + next plain prompt may start a goal.
+        // Cleared when leaving Goal for Auto.
+        self.goal_posture
+            .store(mode.is_goal(), std::sync::atomic::Ordering::Relaxed);
+        // Plan mode is deleted — force tracker inactive if anything left it on.
+        {
+            let mut tracker = self.plan_mode.lock();
+            if tracker.state() != crate::session::plan_mode::PlanModeState::Inactive {
+                tracker.user_exit(false);
+                drop(tracker);
                 self.persist_plan_mode_state();
-                self.enqueue_current_mode_update(acp::SessionModeId::new(
-                    SessionMode::Plan.as_id(),
-                ));
             }
+        }
+        if mode.is_goal() {
+            self.enqueue_current_mode_update(acp::SessionModeId::new(SessionMode::Goal.as_id()));
             tracing::info!(
-                session_id = % self.session_info.id.0, entered,
-                "Plan mode toggled ON (Pending)"
+                session_id = % self.session_info.id.0,
+                "Goal posture toggled ON"
             );
-            let turn_in_flight = self.state.lock().await.running_task.is_some();
-            if entered && turn_in_flight {
-                self.activate_plan_mode_mid_turn().await;
-            }
-            xai_grok_telemetry::session_ctx::log_event(
-                xai_grok_telemetry::events::PlanModeToggled {
-                    enabled: true,
-                    trigger: xai_grok_telemetry::events::PlanModeTrigger::User,
-                    turn_in_flight,
-                    was_previously_active: !entered,
-                },
-            );
-            if entered {
-                tracing::info_span!(
-                    "session.permission_mode_changed",
-                    from_mode =
-                        super::telemetry::permission_mode_label(self.permissions.is_yolo_mode()),
-                    to_mode = "plan",
-                    trigger = "user",
-                    enabled = true,
-                )
-                .in_scope(|| {});
-            }
             return;
         }
-        let was_plan = {
-            let tracker = self.plan_mode.lock();
-            tracker.state() != crate::session::plan_mode::PlanModeState::Inactive
-        };
-        if was_plan {
-            let turn_in_flight = self.state.lock().await.running_task.is_some();
-            self.plan_mode.lock().user_exit(turn_in_flight);
-            self.persist_plan_mode_state();
-            self.enqueue_current_mode_update(session_mode_id.clone());
-            tracing::info!(
-                session_id = % self.session_info.id.0, new_mode = % session_mode_id.0,
-                turn_in_flight, "Plan mode toggled OFF"
-            );
-            xai_grok_telemetry::session_ctx::log_event(
-                xai_grok_telemetry::events::PlanModeToggled {
-                    enabled: false,
-                    trigger: xai_grok_telemetry::events::PlanModeTrigger::User,
-                    turn_in_flight,
-                    was_previously_active: true,
-                },
-            );
-            tracing::info_span!(
-                "session.permission_mode_changed", from_mode = "plan", to_mode = %
-                session_mode_id.0, trigger = "user", enabled = false,
-            )
-            .in_scope(|| {});
+        if matches!(mode, SessionMode::Default) {
+            self.enqueue_current_mode_update(acp::SessionModeId::new(
+                SessionMode::Default.as_id(),
+            ));
+            return;
         }
         let agent_def = match session_mode_id.0.as_ref() {
             "browser_use" => Some(AgentDefinition::browser_use()),
@@ -135,24 +98,18 @@ impl SessionActor {
     /// idempotent, so `set_mode`-driven flows are unaffected.
     pub(super) fn reconcile_plan_mode_with_prompt(&self, prompt_mode: PromptMode) {
         use crate::session::plan_mode::PlanModeState;
-        *self.current_prompt_mode.lock() = prompt_mode;
-        match prompt_mode {
-            PromptMode::Plan => {
-                let entered = self.plan_mode.lock().enter_pending();
-                if entered {
-                    self.persist_plan_mode_state();
-                }
-            }
-            PromptMode::Agent | PromptMode::Ask => {
-                let was_plan = {
-                    let tracker = self.plan_mode.lock();
-                    tracker.state() != PlanModeState::Inactive
-                };
-                if was_plan {
-                    self.plan_mode.lock().user_exit(false);
-                    self.persist_plan_mode_state();
-                }
-            }
+        // Plan mode is deleted: always keep the tracker inactive.
+        *self.current_prompt_mode.lock() = match prompt_mode {
+            PromptMode::Plan | PromptMode::Ask => PromptMode::Agent,
+            other => other,
+        };
+        let was_plan = {
+            let tracker = self.plan_mode.lock();
+            tracker.state() != PlanModeState::Inactive
+        };
+        if was_plan {
+            self.plan_mode.lock().user_exit(false);
+            self.persist_plan_mode_state();
         }
     }
     /// Inject plan mode system-reminders into the conversation.

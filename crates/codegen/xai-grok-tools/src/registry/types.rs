@@ -683,8 +683,7 @@ impl ToolRegistryBuilder {
         b.register::<grok_build::ImageEditTool>();
         b.register::<grok_build::ImageToVideoTool>();
         b.register::<grok_build::ReferenceToVideoTool>();
-        b.register::<grok_build::EnterPlanModeTool>();
-        b.register::<grok_build::ExitPlanModeTool>();
+        // Plan mode tools are not registered — product mode deleted.
         b.register_with_params::<
                 grok_build::AskUserQuestionTool,
                 grok_build::ask_user_question::AskUserQuestionParams,
@@ -2172,8 +2171,6 @@ mod tests {
                 "grep",
                 "list_dir",
                 "ask_user_question",
-                "enter_plan_mode",
-                "exit_plan_mode",
                 "todo_write",
                 "task",
                 "web_search",
@@ -4032,35 +4029,31 @@ mod tests {
     async fn empty_struct_schema_has_properties_and_required() {
         let tmp = TempDir::new().unwrap();
         let builder = ToolRegistryBuilder::new();
+        // Plan mode tools are no longer registered; use scheduler_list as empty-struct example.
         let config = ToolServerConfig {
-            tools: vec![
-                ToolConfig::for_tool::<grok_build::EnterPlanModeTool>(),
-                ToolConfig::for_tool::<grok_build::ExitPlanModeTool>(),
-            ],
+            tools: vec![ToolConfig::for_tool::<grok_build::SchedulerListTool>()],
             behavior_preset: None,
         };
         let ctx = test_session_context(&tmp);
         let toolset = builder
             .finalize(config, ctx)
-            .expect("finalize should succeed with plan mode tools");
+            .expect("finalize should succeed with empty-struct tools");
         let defs = toolset.tool_definitions();
-        for tool_name in &["enter_plan_mode", "exit_plan_mode"] {
-            let def = defs
-                .iter()
-                .find(|d| d.function.name == *tool_name)
-                .unwrap_or_else(|| panic!("{tool_name} definition not found"));
-            let params = &def.function.parameters;
-            assert_eq!(
-                params.get("properties"),
-                Some(&serde_json::json!({})),
-                "{tool_name}: schema must have `properties: {{}}`",
-            );
-            assert_eq!(
-                params.get("required"),
-                Some(&serde_json::json!([])),
-                "{tool_name}: schema must have `required: []`",
-            );
-        }
+        let def = defs
+            .iter()
+            .find(|d| d.function.name == "scheduler_list")
+            .expect("scheduler_list definition not found");
+        let params = &def.function.parameters;
+        assert_eq!(
+            params.get("properties"),
+            Some(&serde_json::json!({})),
+            "scheduler_list: schema must have `properties: {{}}`",
+        );
+        assert_eq!(
+            params.get("required"),
+            Some(&serde_json::json!([])),
+            "scheduler_list: schema must have `required: []`",
+        );
     }
     /// End-to-end: construct a hashline ToolServerConfig with custom
     /// params + shared utilities, finalize, and verify the resulting

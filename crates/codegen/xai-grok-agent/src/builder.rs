@@ -134,27 +134,21 @@ pub struct AgentBuilder {
     /// `list_skills_with_plugins()`.
     preloaded_skills: Option<Vec<xai_grok_tools::implementations::skills::types::SkillInfo>>,
 }
-/// Ensure plan mode tools (`enter_plan_mode`, `exit_plan_mode`,
-/// `ask_user_question`) are present in the tool config.
+/// Ensure `ask_user_question` is present. Plan mode tools
+/// (`enter_plan_mode` / `exit_plan_mode`) are **not** injected — Plan product
+/// mode is removed.
 fn ensure_plan_mode_tools(tool_config: &mut xai_grok_tools::registry::types::ToolServerConfig) {
     use xai_grok_tools::implementations::grok_build;
-    let existing: std::collections::HashSet<&str> =
-        tool_config.tools.iter().map(|tc| tc.id.as_str()).collect();
-    let missing_enter = !existing.contains("GrokBuild:enter_plan_mode");
-    let missing_exit = !existing.contains("GrokBuild:exit_plan_mode");
-    let missing_ask = !existing.contains("GrokBuild:ask_user_question");
-    drop(existing);
-    if missing_enter {
-        tool_config
-            .tools
-            .push((&grok_build::EnterPlanModeTool).into());
-    }
-    if missing_exit {
-        tool_config
-            .tools
-            .push((&grok_build::ExitPlanModeTool).into());
-    }
-    if missing_ask {
+    let has_ask = tool_config
+        .tools
+        .iter()
+        .any(|tc| tc.id.as_str() == "GrokBuild:ask_user_question");
+    // Explicitly strip any residual plan-mode tools from agent toolsets.
+    tool_config.tools.retain(|tc| {
+        tc.id.as_str() != "GrokBuild:enter_plan_mode"
+            && tc.id.as_str() != "GrokBuild:exit_plan_mode"
+    });
+    if !has_ask {
         tool_config
             .tools
             .push((&grok_build::AskUserQuestionTool).into());
@@ -1671,12 +1665,12 @@ mod tests {
                 "[{label}] spawn_subagent presence should match subagents_enabled={subagents}; got tools: {names:?}"
             );
             assert!(
-                names.contains(&"enter_plan_mode"),
-                "[{label}] enter_plan_mode must always be present (TUI plan-mode keybind needs it); got tools: {names:?}"
+                !names.contains(&"enter_plan_mode"),
+                "[{label}] enter_plan_mode must NOT be present (Plan mode removed); got tools: {names:?}"
             );
             assert!(
-                names.contains(&"exit_plan_mode"),
-                "[{label}] exit_plan_mode must always be present (TUI plan-mode keybind needs it); got tools: {names:?}"
+                !names.contains(&"exit_plan_mode"),
+                "[{label}] exit_plan_mode must NOT be present (Plan mode removed); got tools: {names:?}"
             );
         }
     }

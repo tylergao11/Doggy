@@ -133,7 +133,6 @@ default-bazel = [
 filetime = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
-xai-test-utils = { path = "../../common/xai-test-utils" }
 # Decode tar.gz archives produced by workspace upload helpers in tests.
 flate2 = { workspace = true }
 tar = { workspace = true }

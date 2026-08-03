@@ -226,11 +226,11 @@ the model and approval mode are always in view while you answer. (The
 dashboard list rows no longer repeat the model or an always-approve badge,
 keeping the list compact.)
 
-**`Shift+Tab` cycles the peeked agent's mode** (Normal → Plan →
-Always-approve → Normal) — the same cycle as Shift+Tab inside that agent's
-chat view, applied to the **live** agent (the badge updates to match).
-This differs from the new-session dispatch box, where Shift+Tab only
-stages the mode for the *next* agent.
+**`Shift+Tab` cycles the peeked agent's mode** (Auto → Goal → Auto) — the
+same cycle as Shift+Tab inside that agent's chat view, applied to the
+**live** agent (the badge updates to match). This differs from the
+new-session dispatch box, where Shift+Tab only stages the mode for the
+*next* agent.
 
 Unlike the dispatch box (which only ever spawns new sessions), the
 peek's reply **talks to the selected agent**:

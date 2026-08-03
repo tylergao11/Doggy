@@ -756,6 +756,11 @@ pub(crate) struct SessionActor {
     pub(crate) plan_mode: Arc<parking_lot::Mutex<crate::session::plan_mode::PlanModeTracker>>,
     /// Whether goal mode (`/goal`) is enabled for this session (feature flag).
     pub(crate) goal_enabled: bool,
+    /// Resident Goal posture (Shift+Tab → Goal). When true and no Active goal
+    /// exists, the next plain user prompt becomes a goal objective via
+    /// `setup_goal`. Independent of [`Self::goal_enabled`] feature flag —
+    /// harness still requires the flag + toolset to run verification.
+    pub(crate) goal_posture: std::sync::atomic::AtomicBool,
     /// `goal_enabled` && `update_goal` in toolset; refreshed with command availability.
     goal_harness_enabled: std::sync::atomic::AtomicBool,
     /// One-shot: auto-pause persisted Active goal when harness is unavailable.

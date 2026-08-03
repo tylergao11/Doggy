@@ -2684,14 +2684,15 @@ fn paint_dispatch_config_badge(
     // Mode flag, styled exactly like the chat prompt's mode flags.
     let mut flags: Vec<PromptFlag> = Vec::new();
     match state.pending_mode {
-        DashboardDispatchMode::Plan => flags.push(PromptFlag {
-            text: "plan",
-            color: Some(theme.accent_plan),
+        DashboardDispatchMode::Goal => flags.push(PromptFlag {
+            text: "⚡goal",
+            color: Some(theme.warning),
             bold: false,
         }),
         DashboardDispatchMode::Auto
         | DashboardDispatchMode::AlwaysApprove
-        | DashboardDispatchMode::Normal => flags.push(PromptFlag {
+        | DashboardDispatchMode::Normal
+        | DashboardDispatchMode::Plan => flags.push(PromptFlag {
             text: "auto",
             color: None,
             bold: false,

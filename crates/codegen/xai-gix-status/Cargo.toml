@@ -13,7 +13,6 @@ libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-xai-test-utils = { workspace = true }
 
 [lints]
 workspace = true

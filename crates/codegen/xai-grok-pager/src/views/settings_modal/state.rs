@@ -722,14 +722,12 @@ pub(super) fn action_for_enum_commit(key: SettingKey, choice: &'static str) -> O
         "auto_dark_theme" => Some(Action::SetAutoDarkTheme(choice.to_string())),
         "auto_light_theme" => Some(Action::SetAutoLightTheme(choice.to_string())),
         // Canonical strings from settings/defs.rs are the source of truth.
+        // Doggy: product "auto" is full tool allow (not classifier); gate does
+        // not demote it.
         "permission_mode" => match choice {
             "always-approve" => Some(Action::SetPermissionMode(
                 crate::app::actions::PermissionModeKind::AlwaysApprove,
             )),
-            // Auto's feature gate is enforced in `set_permission_mode`
-            // (via `app.auto_mode_gate`, the same source the Shift+Tab cycle
-            // uses), so the modal and the cycle never disagree. Committing Auto
-            // when the gate is off degrades to Ask there.
             "auto" => Some(Action::SetPermissionMode(
                 crate::app::actions::PermissionModeKind::Auto,
             )),
@@ -884,18 +882,19 @@ pub(super) fn group_children(state: &SettingsModalState, key: SettingKey) -> &'s
     }
 }
 
-/// Whether `(key, canonical)` is gated off and must not be offered as a choice:
-/// `permission_mode`'s "auto" when the auto gate is off, and
-/// `voice_capture_mode`'s "hold" without key-release reporting. Pure (gates
-/// passed as args) so it's unit-testable without touching process globals.
+/// Whether `(key, canonical)` is gated off and must not be offered as a choice.
+///
+/// Doggy: product `permission_mode` `"auto"` is full tool allow — **not** the
+/// retired classifier tier — so it is never gated by `auto_mode_gate`.
+/// `voice_capture_mode`'s "hold" still requires key-release reporting.
+/// Pure (gates passed as args) so it's unit-testable without process globals.
 pub(super) fn enum_choice_gated_off(
     key: SettingKey,
     canonical: &str,
-    auto_mode_gate: bool,
+    _auto_mode_gate: bool,
     kitty_releases: bool,
 ) -> bool {
-    (key == "permission_mode" && canonical == "auto" && !auto_mode_gate)
-        || (key == "voice_capture_mode" && canonical == "hold" && !kitty_releases)
+    key == "voice_capture_mode" && canonical == "hold" && !kitty_releases
 }
 
 /// The effective static Enum choices for a picker, hiding gated-off options so

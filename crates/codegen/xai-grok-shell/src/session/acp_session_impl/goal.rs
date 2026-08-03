@@ -298,6 +298,25 @@ impl SessionActor {
             self.goal_blocked_streak
                 .store(0, std::sync::atomic::Ordering::Relaxed);
 
+            // Dual-gate: every Exec mark on `## Acceptance checklist` must
+            // be checked before independent audit runs.
+            let plan_path = self.goal_tracker.lock().plan_path();
+            let _ = crate::session::goal_acceptance_checklist::ensure_dual_checklist_on_disk(
+                &plan_path,
+            );
+            if let Err(detail) =
+                crate::session::goal_acceptance_checklist::require_exec_complete(&plan_path)
+            {
+                try_send_ack(
+                    ack_tx,
+                    UpdateGoalAck::Rejected {
+                        reason: RejectReason::ExecChecklistIncomplete,
+                        detail,
+                    },
+                );
+                continue;
+            }
+
             let policy = self.resolve_goal_classifier_policy();
 
             // Classifier disabled: Doggy still forbids model-driven Complete.
@@ -306,6 +325,15 @@ impl SessionActor {
             if !policy.enabled {
                 let (tokens_used, finished_marginal) = self.goal_tokens(current_tokens);
                 self.clear_pending_classifier_completions();
+                if let Err(e) = crate::session::goal_acceptance_checklist::set_all_audit_marks(
+                    &plan_path, true,
+                ) {
+                    tracing::warn!(
+                        error = %e,
+                        path = %plan_path.display(),
+                        "failed to set Acceptance checklist Audit marks (classifier off)"
+                    );
+                }
                 let mut tracker = self.goal_tracker.lock();
                 Self::record_verdict_on_orchestration(
                     &mut tracker,
@@ -670,6 +698,17 @@ impl SessionActor {
                 // Do NOT `tracker.complete()` here — only
                 // `doggy_mark_task_done` after orchestrator TaskDone may.
                 self.clear_pending_classifier_completions();
+                // Audit gate: mark every dual-checklist Audit column checked.
+                let plan_path = self.goal_tracker.lock().plan_path();
+                if let Err(e) = crate::session::goal_acceptance_checklist::set_all_audit_marks(
+                    &plan_path, true,
+                ) {
+                    tracing::warn!(
+                        error = %e,
+                        path = %plan_path.display(),
+                        "failed to set Acceptance checklist Audit marks on Achieved"
+                    );
+                }
                 let details_path = {
                     let mut tracker = self.goal_tracker.lock();
                     Self::record_verdict_on_orchestration(
@@ -697,6 +736,17 @@ impl SessionActor {
                 pause_summary,
                 gap_fingerprint,
             } => {
+                // Clear Audit marks so the dual gate returns work to execution.
+                let plan_path = self.goal_tracker.lock().plan_path();
+                if let Err(e) = crate::session::goal_acceptance_checklist::set_all_audit_marks(
+                    &plan_path, false,
+                ) {
+                    tracing::warn!(
+                        error = %e,
+                        path = %plan_path.display(),
+                        "failed to clear Acceptance checklist Audit marks on NotAchieved"
+                    );
+                }
                 {
                     let mut tracker = self.goal_tracker.lock();
                     Self::record_verdict_on_orchestration(
@@ -827,7 +877,22 @@ impl SessionActor {
                     GapsUpdate::Set(fail_msg.as_str()),
                 );
                 tracker.record_not_achieved_streak();
-                notify.emit_goal_updated(&mut tracker, tokens_used, finished_marginal);
+                let plan_path = tracker.plan_path();
+                drop(tracker);
+                if let Err(e) = crate::session::goal_acceptance_checklist::set_all_audit_marks(
+                    &plan_path, false,
+                ) {
+                    tracing::warn!(
+                        error = %e,
+                        path = %plan_path.display(),
+                        "failed to clear Acceptance checklist Audit marks on fail-open"
+                    );
+                }
+                notify.emit_goal_updated(
+                    &mut self.goal_tracker.lock(),
+                    tokens_used,
+                    finished_marginal,
+                );
                 // Wire ack name preserved for tool-protocol compatibility; semantic
                 // is no longer "achieved". Orchestrator reads last_classifier_verdict.
                 UpdateGoalAck::ClassifierFailOpenAchieved {

@@ -1197,15 +1197,10 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         }
         Action::DashboardStop => dispatch_dashboard_stop(app),
         Action::DashboardCycleMode => {
-            let policy_block = app.yolo_policy_block;
+            // Plan → Auto → Goal → Plan. Full permission is the default for
+            // Auto/Goal; policy pin only softens yolo at spawn time.
             if let Some(d) = app.dashboard.as_mut() {
                 d.pending_mode = d.pending_mode.cycle();
-                if d.pending_mode == crate::views::dashboard::DashboardDispatchMode::AlwaysApprove
-                    && let Some(warning) = policy_block
-                {
-                    d.pending_mode = d.pending_mode.cycle();
-                    d.set_error_toast(warning);
-                }
             }
             vec![]
         }

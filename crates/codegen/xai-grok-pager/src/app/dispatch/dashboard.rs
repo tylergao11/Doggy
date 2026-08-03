@@ -89,11 +89,10 @@ fn configure_dashboard_state(app: &mut AppView) {
             .sync_acp_commands(&bootstrap_commands, None, &models);
         d.models = models;
         d.pending_model = None;
-        d.pending_mode = if default_yolo {
-            crate::views::dashboard::DashboardDispatchMode::AlwaysApprove
-        } else {
-            crate::views::dashboard::DashboardDispatchMode::Normal
-        };
+        // Doggy default: Auto (ordinary chat, full tool permission).
+        // Always-approve is not a separate product tier.
+        d.pending_mode = crate::views::dashboard::DashboardDispatchMode::Auto;
+        let _ = default_yolo;
     }
 }
 
@@ -1334,9 +1333,11 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
             screen_mode: app.screen_mode,
             pager_state: crate::settings::PagerLocalSnapshot {
                 multiline_mode: dashboard_multiline,
-                yolo_mode: app.default_yolo,
-                auto_mode: app.current_ui.permission_mode.as_deref() == Some("auto")
-                    && !app.default_yolo,
+                yolo_mode: app.default_yolo
+                    || app.current_ui.permission_mode.as_deref() == Some("auto")
+                    || app.current_ui.permission_mode.as_deref() == Some("always-approve"),
+                // Doggy: `"auto"` is full allow, not the classifier tier.
+                auto_mode: false,
                 current_model_name: app.models.current_model_name(),
                 available_models: app
                     .models
@@ -1408,28 +1409,27 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
             stage_dashboard_model(app, model_id, None);
             vec![]
         }
-        // `/plan` toggles whether the next spawned agent starts in plan
-        // mode. The command always reports `On` here (the dashboard's
-        // `plan_mode_active` snapshot is always false), so we flip between
-        // Plan and Normal to give a session-less way to turn it back off.
+        // Plan mode removed: `/plan` stages Goal (or Auto toggle) instead.
         CommandResult::Action(Action::SetPlanMode(_)) => {
             use crate::views::dashboard::DashboardDispatchMode;
             if let Some(d) = app.dashboard.as_mut() {
                 d.dispatch.set_text("");
                 d.error_toast = None;
-                d.pending_mode = if d.pending_mode == DashboardDispatchMode::Plan {
-                    DashboardDispatchMode::Normal
+                d.pending_mode = if d.pending_mode == DashboardDispatchMode::Goal {
+                    DashboardDispatchMode::Auto
                 } else {
-                    DashboardDispatchMode::Plan
+                    DashboardDispatchMode::Goal
                 };
+                d.set_error_toast(
+                    "Plan mode removed — staged Goal for the next agent (Shift+Tab: Auto ↔ Goal)",
+                );
             }
             vec![]
         }
-        // `/plan <description>` — stage plan mode AND spawn immediately with
-        // the description as the first prompt.
+        // `/plan <description>` — stage Goal and spawn with the objective.
         CommandResult::Action(Action::EnterPlanMode { description }) => {
             if let Some(d) = app.dashboard.as_mut() {
-                d.pending_mode = crate::views::dashboard::DashboardDispatchMode::Plan;
+                d.pending_mode = crate::views::dashboard::DashboardDispatchMode::Goal;
             }
             match description {
                 Some(desc) => {
@@ -1525,18 +1525,27 @@ pub(super) fn apply_pending_dispatch_config(
         // dashboard's `/model` choice wins.
         agent.session.deferred_model_switch = m.effort.map(|e| (m.id.clone(), Some(e)));
     }
+    // Plan product mode is deleted — Plan stages as Auto.
+    agent.plan_mode_pending = Some(false);
+    agent.plan_mode_active = false;
     match pending_mode {
-        DashboardDispatchMode::Plan => {
-            agent.session.yolo_mode = false;
-            agent.deferred_session_mode = Some(xai_grok_tools::types::SessionMode::Plan);
-            // Optimistic so the agent view reflects plan mode immediately when
-            // opened via Ctrl+S, before the ACP round-trip confirms it.
-            agent.plan_mode_pending = Some(true);
+        DashboardDispatchMode::Goal => {
+            agent.deferred_session_mode = Some(xai_grok_tools::types::SessionMode::Goal);
+            agent.goal_mode_pending = Some(true);
+            if let Some(warning) = policy_block {
+                agent.session.yolo_mode = false;
+                agent.show_toast(warning);
+            } else {
+                agent.session.yolo_mode = true;
+            }
         }
-        // Auto (and deprecated Normal/AlwaysApprove aliases): full tool auto-run.
         DashboardDispatchMode::Auto
         | DashboardDispatchMode::AlwaysApprove
-        | DashboardDispatchMode::Normal => {
+        | DashboardDispatchMode::Normal
+        | DashboardDispatchMode::Plan => {
+            agent.deferred_session_mode = None;
+            agent.goal_mode_pending = Some(false);
+            agent.goal_mode_active = false;
             if let Some(warning) = policy_block {
                 agent.session.yolo_mode = false;
                 agent.show_toast(warning);
@@ -1561,8 +1570,8 @@ pub(super) fn apply_pending_dispatch_config(
 ///
 /// `attach` (Ctrl+S) additionally walks into the agent's detail
 /// view, mirroring the dispatch input's send+open affordance.
-/// Cycle the PEEKED agent's live mode (Normal → Plan → Always-Approve →
-/// Normal), the peek-panel counterpart to `DashboardCycleMode`. Reuses
+/// Cycle the PEEKED agent's live mode (Auto → Goal → Auto), the
+/// peek-panel counterpart to `DashboardCycleMode`. Reuses
 /// the shared cycle body `dispatch_cycle_mode_and_sync` by temporarily
 /// targeting the peeked agent (the same `active_view` swap as
 /// `dispatch_dashboard_toggle_auto_approve`), so the peek behaves exactly
