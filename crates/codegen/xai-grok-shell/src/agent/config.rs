@@ -1752,7 +1752,8 @@ impl Default for Config {
             reasoning_effort_override: None,
             web_search_model_override: None,
             session_summary_model_override: None,
-            default_yolo_mode: false,
+            // Product default: always-approve when launch path does not override.
+            default_yolo_mode: true,
             default_auto_mode: false,
             agent_profile_path: None,
             client_version: Some(xai_grok_version::VERSION.to_string()),

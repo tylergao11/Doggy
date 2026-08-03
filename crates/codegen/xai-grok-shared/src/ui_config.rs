@@ -235,11 +235,13 @@ impl Default for UiConfig {
             max_thoughts_width: DEFAULT_MAX_THOUGHTS_WIDTH,
             theme: None,
             fork_secondary_model: xai_grok_models::default_model().to_string(),
-            yolo: false,
+            // Product default: full allow (always-approve). Explicit
+            // `permission_mode = "ask"` / `yolo = false` still opts into prompts.
+            yolo: true,
             ui_theme: None,
             compact_mode: false,
             simple_mode: None,
-            permission_mode: None,
+            permission_mode: Some("always-approve".to_string()),
             approval_mode: None,
             default_selected_permission: None,
             show_timestamps: None,

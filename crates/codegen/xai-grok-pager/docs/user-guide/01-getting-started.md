@@ -99,11 +99,11 @@ The `@` operator opens a fuzzy file picker. By default it respects `.gitignore` 
 
 ### Permissions
 
-By default, Grok asks for permission before executing shell commands or editing files. You can approve individually or toggle always-approve mode:
+By default, Doggy **always-approves** tool calls (full allow). `deny` rules and PreToolUse hooks still apply. To require prompts again:
 
-- Press `Ctrl+O` to toggle always-approve mode
-- Use the `--yolo` flag at launch: `grok --yolo`
-- Type `/always-approve` in the prompt to toggle the mode
+- Set `[ui] permission_mode = "ask"` (or `yolo = false`) in `config.toml`
+- Press `Ctrl+O` / type `/always-approve` to toggle always-approve off
+- Launch with `--permission-mode ask` for a single session
 
 ---
 

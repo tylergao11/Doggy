@@ -73,11 +73,13 @@ The prompt policy is named by one of these modes:
 
 | Mode                | Behavior                                                                 | Typical Use                     |
 |---------------------|--------------------------------------------------------------------------|---------------------------------|
-| `default`           | Prompt for anything not pre-approved                                     | Daily interactive use           |
+| `default`           | Prompt for anything not pre-approved                                     | Explicit opt-in to prompts      |
 | `dontAsk`           | Deny anything without an explicit allow rule or built-in auto-approval   | Headless, CI, high-security     |
-| `bypassPermissions` | Auto-approve tool calls (`deny` rules, hooks, and shell `ask` rules still apply) | Trusted environments    |
+| `bypassPermissions` | Auto-approve tool calls (`deny` rules, hooks, and shell `ask` rules still apply) | **Doggy product default** (also `[ui] permission_mode = "always-approve"` / `yolo = true`) |
 | `acceptEdits`       | Auto-approve file edits (`search_replace`, `write`, etc.)                | "Accept edits" workflows        |
 | `plan`              | Accepted for compatibility; plan sessions are a separate feature (see [19-plan-mode.md](19-plan-mode.md)) | Structured planning sessions |
+
+When no `[ui] permission_mode` / `yolo` / remote soft-default is set, Doggy launches in always-approve (`bypassPermissions`). Set `permission_mode = "ask"` or `yolo = false` to restore prompts.
 
 ### Setting the Mode
 

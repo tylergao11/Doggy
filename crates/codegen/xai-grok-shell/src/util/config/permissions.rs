@@ -71,8 +71,12 @@ pub fn permission_mode_from_ui_if_set(ui: &TomlValue) -> Option<PermissionMode> 
 }
 
 /// Pure resolver: effective TOML `[ui]` permission keys (if any) >
-/// remote `permission_mode` > `Ask`. CLI is applied above this by the launch
-/// helpers. Managed/requirements TOML already deep-merge into effective config.
+/// remote `permission_mode` > **AlwaysApprove** (Doggy product default: full
+/// allow). CLI is applied above this by the launch helpers.
+/// Managed/requirements TOML already deep-merge into effective config.
+///
+/// Explicit user settings still win: `permission_mode = "ask"`, `yolo = false`,
+/// etc. map to Ask. Only the *unset* soft-default is AlwaysApprove.
 pub fn resolve_permission_mode(
     effective_ui: Option<&TomlValue>,
     remote_permission_mode: Option<&str>,
@@ -85,7 +89,7 @@ pub fn resolve_permission_mode(
     if let Some(mode_str) = remote_permission_mode {
         return parse_permission_mode_canonical(mode_str);
     }
-    PermissionMode::Ask
+    PermissionMode::AlwaysApprove
 }
 
 /// Display projection for a selected mode that did NOT win yolo/auto
@@ -122,7 +126,8 @@ pub fn resolved_display_permission_mode(
 /// Load selected permission mode for launch (effective TOML + explicit remote).
 ///
 /// TOML `[ui]` keys win over remote; remote only when no TOML permission key.
-/// Missing/unknown → Ask. Config load failure → Ask.
+/// Missing → AlwaysApprove (product default). Config load failure → AlwaysApprove.
+/// Explicit `"ask"` / `yolo = false` still selects Ask.
 ///
 /// Accepts (TOML):
 ///   permission_mode = "always-approve"
@@ -134,7 +139,7 @@ pub fn resolved_display_permission_mode(
 pub fn load_permission_mode(remote_permission_mode: Option<&str>) -> PermissionMode {
     let root: TomlValue = match crate::config::load_effective_config() {
         Ok(r) => r,
-        Err(_) => return PermissionMode::Ask,
+        Err(_) => return PermissionMode::AlwaysApprove,
     };
     let ui = root.as_table().and_then(|t| t.get("ui"));
     resolve_permission_mode(ui, remote_permission_mode)
@@ -297,8 +302,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_permission_mode_none_is_ask() {
-        assert_eq!(resolve_permission_mode(None, None), PermissionMode::Ask);
+    fn resolve_permission_mode_none_is_always_approve() {
+        // Product soft-default: full allow when nothing is configured.
+        assert_eq!(
+            resolve_permission_mode(None, None),
+            PermissionMode::AlwaysApprove
+        );
     }
 
     #[test]
@@ -461,8 +470,12 @@ mod tests {
                 PermissionMode::Ask,
                 "ask",
             ),
-            // No permission keys → Ask.
-            ("[ui]\ntheme = \"groknight\"\n", PermissionMode::Ask, "ask"),
+            // No permission keys → product soft-default AlwaysApprove.
+            (
+                "[ui]\ntheme = \"groknight\"\n",
+                PermissionMode::AlwaysApprove,
+                "always-approve",
+            ),
         ];
         for (toml_str, expected_mode, expected_canonical) in cases {
             let root: TomlValue = toml::from_str(toml_str).unwrap();
@@ -475,10 +488,10 @@ mod tests {
                 "config {toml_str:?} canonical string",
             );
         }
-        // A non-table [ui] value resolves to Ask (defensive).
+        // A non-table [ui] value falls through to the product soft-default.
         assert_eq!(
             resolve_permission_mode(Some(&TomlValue::String("nope".into())), None),
-            PermissionMode::Ask,
+            PermissionMode::AlwaysApprove,
         );
     }
 
@@ -634,6 +647,8 @@ mod tests {
             "persisted 'default' must not collapse onto 'ask' for display"
         );
         assert_eq!(resolved_display_permission_mode(None, Some("auto")), "ask");
+        // Soft-default AlwaysApprove still displays clamped as "ask" when
+        // enforcement is not claimed by this helper (see clamped_display).
         assert_eq!(resolved_display_permission_mode(None, None), "ask");
     }
 
