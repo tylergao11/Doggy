@@ -484,6 +484,24 @@ pub(crate) fn skeptic_scratch_dir(verifier_id: &str, idx: u32) -> PathBuf {
     goal_scratch_root(verifier_id).join(format!("skeptic-{idx}"))
 }
 
+/// One structured verifier finding, persisted alongside the prose gap
+/// summary so the completion gate can scope a fix to the criteria that were
+/// actually rejected.
+///
+/// Deliberately narrow: the prose bullet is already rendered into `message`
+/// (same text as [`GoalOrchestration::last_classifier_gaps`]), so this type
+/// only adds the machine-readable attribution the prose cannot carry.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ClassifierFinding {
+    /// 1-based `## Acceptance criteria` number this finding rejects. `None`
+    /// when the skeptic gave no usable attribution — the finding still
+    /// blocks completion, it just cannot narrow the fix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub criterion: Option<u32>,
+    /// Rendered one-line finding (`criterion N · kind · location — detail`).
+    pub message: String,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GoalOrchestration {
     pub goal_id: String,
@@ -591,6 +609,13 @@ pub struct GoalOrchestration {
     /// reaches the model each round rather than once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_classifier_gaps: Option<String>,
+    /// Structured counterpart of [`Self::last_classifier_gaps`], written and
+    /// cleared in lockstep with it. Lets the completion gate inject one fix
+    /// entry per rejected criterion instead of one opaque blob. Empty when
+    /// the panel attributed nothing, and on snapshots written by an older
+    /// shell — both fall back to the prose summary.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub last_classifier_findings: Vec<ClassifierFinding>,
     /// First verification round's full `FINAL_RESPONSE`, replayed as the
     /// breadth anchor on later rounds so a cold skeptic panel sees the whole
     /// deliverable, not just that round's fix note. Captured once (capped);
@@ -701,6 +726,14 @@ pub struct GoalOrchestration {
     /// it is never persisted.
     #[serde(skip)]
     pub live_tokens_by_model: Vec<(String, u64)>,
+    /// Consecutive infra-classified turn failures on this goal, used to bound
+    /// how many times the harness re-drives itself before conceding.
+    ///
+    /// Transient on purpose: a session restart is a fresh start, and a
+    /// persisted streak would let a restarted goal inherit exhausted patience
+    /// and stop on its first failure.
+    #[serde(skip)]
+    pub infra_retry_streak: u32,
     #[serde(skip)]
     pub live_context_window: u64,
     #[serde(skip)]
@@ -1019,6 +1052,7 @@ impl GoalTracker {
             last_classifier_details_path: None,
             last_classifier_at: None,
             last_classifier_gaps: None,
+            last_classifier_findings: Vec::new(),
             first_final_response: None,
             skeptic0_session_id: None,
             skeptic_model_assignment: Vec::new(),
@@ -1035,6 +1069,7 @@ impl GoalTracker {
             scratch_dir_ready,
             live_subagent_tokens: 0,
             live_tokens_by_model: Vec::new(),
+            infra_retry_streak: 0,
             live_context_window: 0,
             live_context_pct: 0,
             live_turn_count: 0,
@@ -1354,6 +1389,32 @@ impl GoalTracker {
         }
     }
 
+    /// Count one infra-classified turn failure and report whether the harness
+    /// still has retries left.
+    ///
+    /// `true` means re-drive the goal; `false` means the streak is spent. The
+    /// caller owns the delay and the terminal decision — this only holds the
+    /// count, so the policy stays in one place at the call site.
+    pub fn record_infra_failure(&mut self, max_retries: u32) -> bool {
+        match self.orchestration.as_mut() {
+            Some(o) => {
+                o.infra_retry_streak = o.infra_retry_streak.saturating_add(1);
+                o.infra_retry_streak <= max_retries
+            }
+            // No orchestration means no goal to re-drive.
+            None => false,
+        }
+    }
+
+    /// Forget the infra failure streak. Called whenever a turn gets through,
+    /// so patience is spent only on *consecutive* failures — an intermittent
+    /// rate limit over a long run must not accumulate into a stop.
+    pub fn clear_infra_failure_streak(&mut self) {
+        if let Some(o) = self.orchestration.as_mut() {
+            o.infra_retry_streak = 0;
+        }
+    }
+
     /// Atomically evaluate the strategist trigger and claim a fire under a
     /// single lock: if `should_fire(consecutive_not_achieved,
     /// last_strategist_fired_at)` holds, mark the fire at the current streak
@@ -1459,6 +1520,7 @@ pub(crate) fn make_base_orchestration() -> GoalOrchestration {
         last_classifier_details_path: None,
         last_classifier_at: None,
         last_classifier_gaps: None,
+        last_classifier_findings: Vec::new(),
         first_final_response: None,
         skeptic0_session_id: None,
         skeptic_model_assignment: Vec::new(),
@@ -1475,6 +1537,7 @@ pub(crate) fn make_base_orchestration() -> GoalOrchestration {
         scratch_dir_ready: false,
         live_subagent_tokens: 0,
         live_tokens_by_model: Vec::new(),
+        infra_retry_streak: 0,
         live_context_window: 0,
         live_context_pct: 0,
         live_turn_count: 0,
@@ -2962,19 +3025,11 @@ mod tests {
         assert!(t.snapshot().unwrap().elapsed_ms >= 5000);
     }
 
-    /// A snapshot written by an older shell will omit all nine
-    /// classifier fields (incl. the stall `last_gap_fingerprint` /
-    /// `classifier_stall_count` and the persisted `last_classifier_gaps`
-    /// summary added later). Deserialization must
-    /// succeed and every new field must come back at its
-    /// `#[serde(default)]` value. The
-    /// JSON literal below doubles as a documented v0 schema contract
-    /// — if a future PR breaks legacy load, this test fails *because*
-    /// the documented shape no longer parses, not because the in-code
-    /// serialization shape happened to drift in sync.
-    #[test]
-    fn classifier_fields_backwards_compat_defaults_on_legacy_snapshot() {
-        const LEGACY_SNAPSHOT_JSON: &str = r#"{
+    /// A v0 snapshot as an older shell wrote it. This literal doubles as a
+    /// documented schema contract: if a future change breaks legacy load, the
+    /// tests below fail *because* the documented shape no longer parses, not
+    /// because the in-code serialization shape drifted in sync with them.
+    const LEGACY_SNAPSHOT_JSON: &str = r#"{
             "goal_id": "g-legacy",
             "objective": "legacy goal",
             "status": "active",
@@ -2992,6 +3047,14 @@ mod tests {
             "history": [],
             "verifier_id": "abcdef012345"
         }"#;
+
+    /// A snapshot written by an older shell omits every classifier field
+    /// (incl. the stall `last_gap_fingerprint` / `classifier_stall_count` and
+    /// the persisted `last_classifier_gaps` summary added later).
+    /// Deserialization must succeed and every new field must come back at its
+    /// `#[serde(default)]` value.
+    #[test]
+    fn classifier_fields_backwards_compat_defaults_on_legacy_snapshot() {
         let legacy: GoalOrchestration =
             serde_json::from_str(LEGACY_SNAPSHOT_JSON).expect("legacy snapshot must deserialize");
         assert_eq!(legacy.goal_id, "g-legacy");
@@ -3002,6 +3065,10 @@ mod tests {
         assert!(legacy.last_classifier_details_path.is_none());
         assert!(legacy.last_classifier_at.is_none());
         assert!(legacy.last_classifier_gaps.is_none());
+        // Per-criterion findings postdate this snapshot: a legacy resume has
+        // prose gaps at most, so the completion gate must fall back to the
+        // unattributed path instead of seeing a bogus empty attribution.
+        assert!(legacy.last_classifier_findings.is_empty());
         assert!(legacy.skeptic0_session_id.is_none());
         assert!(legacy.changes_baseline_commit.is_none());
         assert!(legacy.last_gap_fingerprint.is_none());
@@ -3013,6 +3080,80 @@ mod tests {
         // first `goal_tokens` call seeds from `token_baseline`.
         assert_eq!(legacy.parent_tokens_spent, 0);
         assert_eq!(legacy.last_session_tokens_seen, None);
+    }
+
+    /// The infra retry budget is what keeps an unattended run alive through a
+    /// rate limit, so its arithmetic decides whether the goal survives or
+    /// stops waiting for the user.
+    #[test]
+    fn infra_failure_streak_bounds_retries_and_refills_on_success() {
+        let mut t = make_tracker();
+        activate_tracker(&mut t);
+
+        // The first `max` failures are absorbed; the one after is not.
+        assert!(t.record_infra_failure(2), "first failure must retry");
+        assert!(t.record_infra_failure(2), "second failure must retry");
+        assert!(!t.record_infra_failure(2), "third failure exhausts the budget");
+        assert_eq!(t.snapshot().unwrap().infra_retry_streak, 3);
+
+        // A turn that gets through refills it, so an intermittent failure over
+        // a long run never accumulates into a stop.
+        t.clear_infra_failure_streak();
+        assert_eq!(t.snapshot().unwrap().infra_retry_streak, 0);
+        assert!(t.record_infra_failure(2));
+
+        // A zero budget means "never retry" rather than "retry once".
+        t.clear_infra_failure_streak();
+        assert!(!t.record_infra_failure(0));
+    }
+
+    #[test]
+    fn infra_failure_streak_is_transient_across_a_restart() {
+        // Persisting it would let a restarted goal inherit spent patience and
+        // stop on its very first failure.
+        let mut t = make_tracker();
+        activate_tracker(&mut t);
+        assert!(t.record_infra_failure(4));
+        let json = serde_json::to_string(t.snapshot().unwrap()).unwrap();
+        assert!(!json.contains("infra_retry_streak"));
+        let restored: GoalOrchestration = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.infra_retry_streak, 0);
+    }
+
+    /// Structured per-criterion findings must survive a resume: the
+    /// completion gate reads them to clear only the refuted criteria, so
+    /// losing them across a save/load silently degrades every rejection back
+    /// to a whole-goal redo. Empty stays absent from the snapshot so existing
+    /// on-disk files are byte-identical until a panel actually attributes.
+    #[test]
+    fn classifier_findings_round_trip_and_stay_absent_when_empty() {
+        let mut o: GoalOrchestration =
+            serde_json::from_str(LEGACY_SNAPSHOT_JSON).expect("snapshot must deserialize");
+        assert!(
+            !serde_json::to_string(&o)
+                .unwrap()
+                .contains("last_classifier_findings"),
+            "empty findings must not be written"
+        );
+        o.last_classifier_findings = vec![
+            ClassifierFinding {
+                criterion: Some(2),
+                message: "criterion 2 · no test covers the retry path".into(),
+            },
+            ClassifierFinding {
+                criterion: None,
+                message: "unattributed gap".into(),
+            },
+        ];
+        let reloaded: GoalOrchestration =
+            serde_json::from_str(&serde_json::to_string(&o).unwrap()).unwrap();
+        assert_eq!(reloaded.last_classifier_findings.len(), 2);
+        assert_eq!(reloaded.last_classifier_findings[0].criterion, Some(2));
+        assert_eq!(
+            reloaded.last_classifier_findings[0].message,
+            "criterion 2 · no test covers the retry path"
+        );
+        assert_eq!(reloaded.last_classifier_findings[1].criterion, None);
     }
 
     /// Legacy on-disk snapshots carry the dropped `tokens_used` and

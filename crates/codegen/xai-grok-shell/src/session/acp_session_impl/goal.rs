@@ -71,12 +71,20 @@ fn role_tool_names_from(
 }
 
 /// How [`SessionActor::record_verdict_on_orchestration`] updates the
-/// orchestration's `last_classifier_gaps`. A real `NotAchieved` panel result
-/// stamps fresh curated gaps (`Set`), a verdict that resolves them clears
-/// (`Clear`), and a synthetic verdict that ran no panel leaves any stored
-/// real gaps replaying into the continuation directive (`Preserve`).
+/// orchestration's `last_classifier_gaps` and its structured
+/// `last_classifier_findings`. A real `NotAchieved` panel result stamps fresh
+/// curated gaps (`Set`), a verdict that resolves them clears (`Clear`), and a
+/// synthetic verdict that ran no panel leaves any stored real gaps replaying
+/// into the continuation directive (`Preserve`).
+///
+/// The prose summary and the structured findings always move together: a
+/// caller that has no attribution passes an empty `findings` slice, never a
+/// stale one, so the two can never disagree about which round they describe.
 pub(crate) enum GapsUpdate<'a> {
-    Set(&'a str),
+    Set {
+        summary: &'a str,
+        findings: &'a [crate::session::goal_tracker::ClassifierFinding],
+    },
     Clear,
     Preserve,
 }
@@ -733,17 +741,35 @@ impl SessionActor {
             GoalClassifierOutcome::NotAchieved {
                 details_path,
                 gaps_summary,
+                gaps_findings,
                 pause_summary,
                 gap_fingerprint,
             } => {
                 // Clear Audit marks so the dual gate returns work to execution.
+                // Clear only the refuted criteria when the panel attributed
+                // *every* finding: work the panel did not reject keeps its
+                // audit credit and is not re-executed. A single unattributed
+                // finding could indict any criterion, so it forces the full
+                // clear — narrowing on partial attribution would hand out
+                // audit credit no skeptic actually gave.
                 let plan_path = self.goal_tracker.lock().plan_path();
-                if let Err(e) = crate::session::goal_acceptance_checklist::set_all_audit_marks(
-                    &plan_path, false,
-                ) {
+                let refuted: Vec<u32> = gaps_findings.iter().filter_map(|f| f.criterion).collect();
+                let localized =
+                    !gaps_findings.is_empty() && refuted.len() == gaps_findings.len();
+                let cleared = if localized {
+                    crate::session::goal_acceptance_checklist::set_audit_marks_for_criteria(
+                        &plan_path, &refuted, false,
+                    )
+                } else {
+                    crate::session::goal_acceptance_checklist::set_all_audit_marks(
+                        &plan_path, false,
+                    )
+                };
+                if let Err(e) = cleared {
                     tracing::warn!(
                         error = %e,
                         path = %plan_path.display(),
+                        localized,
                         "failed to clear Acceptance checklist Audit marks on NotAchieved"
                     );
                 }
@@ -753,7 +779,10 @@ impl SessionActor {
                         &mut tracker,
                         GoalClassifierVerdict::NotAchieved,
                         Some(details_path.as_str()),
-                        GapsUpdate::Set(gaps_summary.as_str()),
+                        GapsUpdate::Set {
+                            summary: gaps_summary.as_str(),
+                            findings: &gaps_findings,
+                        },
                     );
                     // Bump the strategist streak under the same lock; the
                     // trigger below (after the cap/stall guards, so a paused
@@ -874,7 +903,14 @@ impl SessionActor {
                     &mut tracker,
                     GoalClassifierVerdict::NotAchieved,
                     (!details_path.is_empty()).then_some(details_path.as_str()),
-                    GapsUpdate::Set(fail_msg.as_str()),
+                    // Infra failure, not a panel verdict: there is no
+                    // per-criterion attribution to carry, and an empty slice
+                    // (never `Preserve`) keeps the structured findings from
+                    // outliving the prose they were rendered with.
+                    GapsUpdate::Set {
+                        summary: fail_msg.as_str(),
+                        findings: &[],
+                    },
                 );
                 tracker.record_not_achieved_streak();
                 let plan_path = tracker.plan_path();
@@ -919,8 +955,14 @@ impl SessionActor {
                 o.last_classifier_details_path = Some(p.to_string());
             }
             match gaps {
-                GapsUpdate::Set(g) => o.last_classifier_gaps = Some(g.to_string()),
-                GapsUpdate::Clear => o.last_classifier_gaps = None,
+                GapsUpdate::Set { summary, findings } => {
+                    o.last_classifier_gaps = Some(summary.to_string());
+                    o.last_classifier_findings = findings.to_vec();
+                }
+                GapsUpdate::Clear => {
+                    o.last_classifier_gaps = None;
+                    o.last_classifier_findings.clear();
+                }
                 GapsUpdate::Preserve => {}
             }
             o.last_classifier_at = Some(chrono::Utc::now().to_rfc3339());

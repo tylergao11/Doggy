@@ -96,6 +96,24 @@ impl SessionActor {
         match o.last_classifier_verdict {
             Some(GoalClassifierVerdict::Achieved) => VerificationOutcome::Achieved,
             Some(GoalClassifierVerdict::NotAchieved) => {
+                // Prefer the structured panel findings: one entry per rejected
+                // criterion lets the Fix injection name exactly what to redo.
+                // The prose summary is the fallback for a panel that attributed
+                // nothing and for snapshots written before the field existed —
+                // one opaque finding still blocks Done, it just cannot narrow.
+                if !o.last_classifier_findings.is_empty() {
+                    return VerificationOutcome::Rejected {
+                        findings: o
+                            .last_classifier_findings
+                            .iter()
+                            .map(|f| AuditFinding {
+                                severity: Some("error".into()),
+                                criterion: f.criterion,
+                                message: f.message.clone(),
+                            })
+                            .collect(),
+                    };
+                }
                 let message = o
                     .last_classifier_gaps
                     .as_deref()
@@ -109,6 +127,7 @@ impl SessionActor {
                 VerificationOutcome::Rejected {
                     findings: vec![AuditFinding {
                         severity: Some("error".into()),
+                        criterion: None,
                         message,
                     }],
                 }

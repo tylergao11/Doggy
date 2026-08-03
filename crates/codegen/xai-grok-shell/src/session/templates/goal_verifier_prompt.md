@@ -132,7 +132,7 @@ Write this object (fixed schema) with your file-write tool:
 ```json
 {
   "refuted": true,
-  "findings": [{"kind": "bug|gap|todo", "location": "path:line or where", "detail": "one line"}],
+  "findings": [{"kind": "bug|gap|todo", "criterion": 2, "location": "path:line or where", "detail": "one line"}],
   "evidence": "string — one-line summary citation",
   "confidence": "high",
   "blocking": "none",
@@ -142,9 +142,12 @@ Write this object (fixed schema) with your file-write tool:
 
 - `findings` (array — the PRIMARY output the implementer acts on): one item per
   gap. `kind` = `bug` (defect in shipped content/behavior) | `gap` (unmet
-  criterion) | `todo` (stub left in shipped code). Prefer
-  "criterion N unmet: …" with what **content observation** is missing. Empty
-  only when not refuted.
+  criterion) | `todo` (stub left in shipped code). `criterion` (integer) = the
+  1-based number of the `## Acceptance criteria` item this gap rejects — always
+  set it when the gap maps to one criterion, and split a finding that spans two
+  criteria into one item each, so the implementer can fix exactly the rejected
+  criteria instead of re-doing the whole goal. State what **content
+  observation** is missing. Empty only when not refuted.
 - `refuted` (bool): `false` only if every gating criterion holds on the content.
 - `evidence` (string): one-line summary citation of **your** observation; for
   `code-change`, FINAL_RESPONSE prose is NOT evidence.

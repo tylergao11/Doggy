@@ -233,6 +233,7 @@ mod tests {
     fn rejected_verification_fixes_never_done() {
         let findings = vec![AuditFinding {
             severity: Some("error".into()),
+            criterion: Some(2),
             message: "missing lock co-packaging".into(),
         }];
         let d = decide_after_round(&round(
@@ -326,6 +327,7 @@ mod tests {
         let fix = TaskDecision::RunAnotherRound {
             injection: Injection::fix_with(vec![AuditFinding {
                 severity: None,
+                criterion: None,
                 message: "x".into(),
             }]),
         };

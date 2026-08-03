@@ -636,7 +636,7 @@ pub struct RuntimeResolutionContext<'a> {
     pub cli_subagents: Option<bool>,
     pub cli_web_search_model: Option<&'a str>,
     pub cli_session_summary_model: Option<&'a str>,
-    /// CLI `--experimental-memory` flag. Enables cross-session memory.
+    /// CLI `--experimental-memory` flag. Force-enables cross-session memory.
     pub cli_experimental_memory: bool,
     /// CLI `--no-memory` flag. Overrides all other memory settings.
     pub cli_no_memory: bool,

@@ -311,11 +311,11 @@ Priority for `[mcp_servers]` and `[plugins]`: `.grok/config.toml` (current dir) 
 
 ### Memory
 
-Persist knowledge across sessions (requires `--experimental-memory` or `GROK_MEMORY=1`).
+Persist knowledge across sessions (enabled by default; disable with `--no-memory`, `GROK_MEMORY=0`, or `enabled = false`).
 
 ```toml
 [memory]
-enabled = false                       # enable memory
+enabled = true                        # on by default; set false to disable
 
 [memory.session]
 save_on_end = true                    # write metadata summary on session end

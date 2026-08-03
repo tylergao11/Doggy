@@ -5,6 +5,12 @@
 pub struct AuditFinding {
     /// Severity hint for inject text (`error`, `warning`, …). Free-form for now.
     pub severity: Option<String>,
+    /// Which acceptance criterion this finding rejects, 1-based to match the
+    /// plan's numbered `## Acceptance criteria` and the row order of its
+    /// `## Acceptance checklist`. `None` when the auditor gave no attribution
+    /// — a finding without it still blocks Done, it just cannot be narrowed to
+    /// one criterion, so the fix injection has to fall back to the whole goal.
+    pub criterion: Option<u32>,
     /// What failed or needs change.
     pub message: String,
 }
@@ -52,7 +58,11 @@ impl AuditVerdict {
                     .as_deref()
                     .map(|s| format!("[{s}] "))
                     .unwrap_or_default();
-                format!("{}. {sev}{}", i + 1, f.message)
+                let crit = f
+                    .criterion
+                    .map(|c| format!("criterion {c}: "))
+                    .unwrap_or_default();
+                format!("{}. {sev}{crit}{}", i + 1, f.message)
             })
             .collect::<Vec<_>>()
             .join("\n")

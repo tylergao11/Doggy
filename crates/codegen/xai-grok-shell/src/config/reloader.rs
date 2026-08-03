@@ -875,12 +875,15 @@ ignore = ["/tmp"]
 
     #[test]
     fn memory_config_diff_detects_enabled_change() {
-        let empty = toml::Value::Table(toml::map::Map::new());
+        // Default is enabled; diff is on → off via explicit config.
         let enabled: toml::Value = toml::from_str("[memory]\nenabled = true").unwrap();
+        let disabled: toml::Value = toml::from_str("[memory]\nenabled = false").unwrap();
 
-        let old = crate::config::MemoryConfig::resolve(false, false, &empty, None);
-        let new = crate::config::MemoryConfig::resolve(false, false, &enabled, None);
+        let old = crate::config::MemoryConfig::resolve(false, false, &enabled, None);
+        let new = crate::config::MemoryConfig::resolve(false, false, &disabled, None);
         assert_ne!(old, new, "should detect enabled field change");
+        assert!(old.enabled);
+        assert!(!new.enabled);
     }
 
     #[test]

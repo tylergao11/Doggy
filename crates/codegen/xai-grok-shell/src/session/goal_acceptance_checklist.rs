@@ -16,6 +16,9 @@
 //!   independent audit runs.
 //! - Goal complete requires every Audit cell `[x]` after a successful audit.
 
+use crate::session::goal_plan_md::{
+    header_level, is_any_header, is_section_header, is_separator_row, table_cells,
+};
 use std::path::Path;
 
 const SECTION: &str = "acceptance checklist";
@@ -28,24 +31,6 @@ pub(crate) struct DualRow {
     pub criterion: String,
 }
 
-/// Whether `line` is a markdown header whose title matches `name` (case-insensitive).
-fn is_section_header(line: &str, name: &str) -> bool {
-    let trimmed = line.trim_start();
-    if !trimmed.starts_with('#') {
-        return false;
-    }
-    let title = trimmed.trim_start_matches('#').trim();
-    title.eq_ignore_ascii_case(name)
-}
-
-fn header_level(line: &str) -> usize {
-    line.trim_start().chars().take_while(|c| *c == '#').count()
-}
-
-fn is_any_header(line: &str) -> bool {
-    line.trim_start().starts_with('#')
-}
-
 /// Parse a table cell that holds a markdown checkbox.
 fn parse_mark(cell: &str) -> Option<bool> {
     let t = cell.trim();
@@ -54,28 +39,6 @@ fn parse_mark(cell: &str) -> Option<bool> {
         "[ ]" => Some(false),
         _ => None,
     }
-}
-
-/// Split a markdown table row into cells (without leading/trailing empties from pipes).
-fn table_cells(line: &str) -> Vec<&str> {
-    let trimmed = line.trim();
-    if !trimmed.starts_with('|') {
-        return Vec::new();
-    }
-    trimmed
-        .trim_matches('|')
-        .split('|')
-        .map(str::trim)
-        .collect()
-}
-
-/// True when the row is a separator like `|---|:---:|---|`.
-fn is_separator_row(cells: &[&str]) -> bool {
-    !cells.is_empty()
-        && cells.iter().all(|c| {
-            let s = c.trim();
-            !s.is_empty() && s.chars().all(|ch| ch == '-' || ch == ':' || ch == ' ')
-        })
 }
 
 /// Parse dual-column rows from a full plan body.
@@ -200,13 +163,61 @@ pub(crate) fn set_all_audit_marks(path: &Path, checked: bool) -> std::io::Result
     Ok(())
 }
 
+/// Rewrite the Audit mark of only the listed criteria (1-based row numbers,
+/// matching the numbered `## Acceptance criteria`), leaving every other row
+/// untouched.
+///
+/// This is what makes a rejection local: a verdict that refutes criterion 2
+/// returns only criterion 2 to execution, so work already accepted elsewhere
+/// is not re-audited. Out-of-range numbers are ignored rather than an error —
+/// they come from model output, and a bad index must not abort the rewrite of
+/// the valid ones. Callers with no attribution at all must use
+/// [`set_all_audit_marks`]; passing an empty slice here is a no-op, never a
+/// silent full clear.
+pub(crate) fn set_audit_marks_for_criteria(
+    path: &Path,
+    criteria: &[u32],
+    checked: bool,
+) -> std::io::Result<()> {
+    if criteria.is_empty() {
+        return Ok(());
+    }
+    let body = std::fs::read_to_string(path)?;
+    let updated = rewrite_audit_marks_for_criteria(&body, criteria, checked);
+    if updated != body {
+        std::fs::write(path, updated)?;
+    }
+    Ok(())
+}
+
 fn mark_glyph(checked: bool) -> &'static str {
     if checked { "[x]" } else { "[ ]" }
 }
 
 /// Rewrite Audit column cells inside the Acceptance checklist section.
 pub(crate) fn rewrite_audit_marks(body: &str, checked: bool) -> String {
+    rewrite_audit_marks_where(body, checked, |_| true)
+}
+
+/// Rewrite the Audit cells of the criteria whose 1-based row numbers appear in
+/// `criteria`. Row numbers follow checklist order, which is the same order the
+/// numbered `## Acceptance criteria` list uses, so a skeptic's `criterion: 2`
+/// lands on the second row.
+pub(crate) fn rewrite_audit_marks_for_criteria(
+    body: &str,
+    criteria: &[u32],
+    checked: bool,
+) -> String {
+    rewrite_audit_marks_where(body, checked, |row| criteria.contains(&row))
+}
+
+fn rewrite_audit_marks_where(
+    body: &str,
+    checked: bool,
+    mut should_rewrite: impl FnMut(u32) -> bool,
+) -> String {
     let glyph = mark_glyph(checked);
+    let mut row_number = 0u32;
     let mut out = String::with_capacity(body.len() + 16);
     let mut in_section = false;
     let mut section_level = 0usize;
@@ -230,14 +241,17 @@ pub(crate) fn rewrite_audit_marks(body: &str, checked: bool) -> String {
                 && parse_mark(cells[0]).is_some()
                 && parse_mark(cells[1]).is_some()
             {
-                let criterion = cells[2..].join(" | ");
-                out.push_str(&format!(
-                    "| {} | {} | {} |\n",
-                    cells[0].trim(),
-                    glyph,
-                    criterion.trim()
-                ));
-                continue;
+                row_number += 1;
+                if should_rewrite(row_number) {
+                    let criterion = cells[2..].join(" | ");
+                    out.push_str(&format!(
+                        "| {} | {} | {} |\n",
+                        cells[0].trim(),
+                        glyph,
+                        criterion.trim()
+                    ));
+                    continue;
+                }
             }
         }
         out.push_str(line);
@@ -403,6 +417,42 @@ mod tests {
         assert!(rows[1].exec);
         let cleared = rewrite_audit_marks(&out, false);
         assert!(parse_dual_rows(&cleared).iter().all(|r| !r.audit));
+    }
+
+    #[test]
+    fn rewrite_audit_marks_for_criteria_clears_only_the_refuted_row() {
+        let all_audited = rewrite_audit_marks(SAMPLE, true);
+        let out = rewrite_audit_marks_for_criteria(&all_audited, &[2], false);
+        let rows = parse_dual_rows(&out);
+        // Criterion 1 keeps the audit credit it earned; only 2 goes back.
+        assert!(rows[0].audit);
+        assert!(!rows[1].audit);
+        // Exec marks are untouched by an audit rewrite.
+        assert!(!rows[0].exec);
+        assert!(rows[1].exec);
+    }
+
+    #[test]
+    fn rewrite_audit_marks_for_criteria_ignores_out_of_range_and_empty() {
+        let all_audited = rewrite_audit_marks(SAMPLE, true);
+        // A model-supplied row number past the end must not touch other rows
+        // and must not panic.
+        let out = rewrite_audit_marks_for_criteria(&all_audited, &[7], false);
+        assert!(parse_dual_rows(&out).iter().all(|r| r.audit));
+        // An empty list is a no-op, never a full clear.
+        let empty = rewrite_audit_marks_for_criteria(&all_audited, &[], false);
+        assert_eq!(empty, all_audited);
+    }
+
+    #[test]
+    fn set_audit_marks_for_criteria_writes_only_the_named_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plan.md");
+        std::fs::write(&path, rewrite_audit_marks(SAMPLE, true)).unwrap();
+        set_audit_marks_for_criteria(&path, &[1], false).unwrap();
+        let rows = parse_dual_rows(&std::fs::read_to_string(&path).unwrap());
+        assert!(!rows[0].audit);
+        assert!(rows[1].audit);
     }
 
     #[test]

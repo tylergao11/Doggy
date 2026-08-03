@@ -11,9 +11,10 @@ pub use xai_grok_config_types::{
 /// Full configuration for the memory system.
 ///
 /// Parsed from the `[memory]` section of `~/.Doggy/config.toml` or
-/// `.Doggy/config.toml`. Disabled by default; enabled via
-/// `--experimental-memory` CLI flag or `GROK_MEMORY=1` env var.
-/// Force-disabled via `GROK_MEMORY=0` (overrides TOML and remote settings).
+/// `.Doggy/config.toml`. Enabled by default. Force-disable with
+/// `--no-memory`, `GROK_MEMORY=0`, or `[memory] enabled = false`.
+/// `--experimental-memory` / `GROK_MEMORY=1` still force-enable when a lower
+/// layer would otherwise leave it off.
 ///
 /// All sub-configs are pre-populated with production-ready defaults so that
 /// later PRs (indexing, search, flush, pruning) can read them without any
@@ -73,7 +74,7 @@ fn default_curated_char_limit() -> u64 {
 impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             curated_char_limit: DEFAULT_CURATED_CHAR_LIMIT,
             index: MemoryIndexConfig::default(),
             embedding: MemoryEmbeddingConfig::default(),
@@ -95,10 +96,11 @@ impl Default for MemoryConfig {
 impl MemoryConfig {
     /// Resolve the final memory config from all sources (in priority order):
     /// 1. CLI flag `--no-memory` (absolute highest — always disables, overrides all)
-    /// 2. CLI flag `--experimental-memory` (enables, but overridden by --no-memory)
+    /// 2. CLI flag `--experimental-memory` (force-enables, but overridden by --no-memory)
     /// 3. `GROK_MEMORY` env var: `1`/`true` enables, `0`/`false` force-disables
     /// 4. Config file `[memory]` / `[compaction]` sections
     /// 5. Remote settings from `/v1/settings`
+    /// 6. Default: enabled
     ///
     /// Remote settings only override fields when the corresponding local
     /// config section is absent. Section-level granularity: if `[memory.search]`
@@ -238,7 +240,7 @@ impl MemoryConfig {
             result.enabled,
             config.get("memory").is_some(),
             remote.and_then(|r| r.memory_enabled),
-            false,
+            true,
         );
         result.enabled = resolved.value;
         if no_memory {

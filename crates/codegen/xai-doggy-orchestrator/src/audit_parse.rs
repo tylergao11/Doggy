@@ -66,6 +66,7 @@ pub fn parse_audit_agent_output(text: &str) -> Result<AuditVerdict, AuditParseEr
         let findings = if findings.is_empty() {
             vec![AuditFinding {
                 severity: Some("error".into()),
+                criterion: None,
                 message: "Audit reported pass=false with no findings; treat as incomplete."
                     .into(),
             }]
@@ -92,7 +93,38 @@ fn parse_finding(v: &serde_json::Value) -> Result<AuditFinding, AuditParseError>
         .and_then(|s| s.as_str())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    Ok(AuditFinding { severity, message })
+    let criterion = obj.get("criterion").and_then(criterion_from_json);
+    Ok(AuditFinding {
+        severity,
+        criterion,
+        message,
+    })
+}
+
+/// Best-effort 1-based criterion attribution. Deliberately lenient: a
+/// missing, zero, or unparseable value yields `None` rather than an error,
+/// because losing the attribution must never invalidate an otherwise usable
+/// verdict (the finding still blocks Done, just without narrowing).
+///
+/// Accepts a JSON number or a string carrying the first integer it contains
+/// (`"3"`, `"criterion 3"`, `"#3"`) — small models emit all three shapes.
+fn criterion_from_json(v: &serde_json::Value) -> Option<u32> {
+    let n = match v {
+        serde_json::Value::Number(n) => n.as_u64()?,
+        serde_json::Value::String(s) => first_integer(s)?,
+        _ => return None,
+    };
+    u32::try_from(n).ok().filter(|n| *n > 0)
+}
+
+/// First run of ASCII digits in `s`, parsed as `u64`.
+fn first_integer(s: &str) -> Option<u64> {
+    let start = s.find(|c: char| c.is_ascii_digit())?;
+    let rest = &s[start..];
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
 }
 
 /// Pull the first fenced ```json block, else a balanced `{...}` that looks
@@ -268,5 +300,52 @@ Checked the diff. Several issues remain.
     fn no_json_is_error() {
         let err = parse_audit_agent_output("looks fine to me, ship it").unwrap_err();
         assert_eq!(err, AuditParseError::NoJson);
+    }
+
+    #[test]
+    fn parses_criterion_attribution() {
+        let text = r#"{
+          "pass": false,
+          "findings": [
+            {"criterion": 3, "message": "no launch observation"},
+            {"criterion": "criterion 1", "message": "parser not exercised"},
+            {"message": "unattributed"}
+          ]
+        }"#;
+        let v = parse_audit_agent_output(text).unwrap();
+        assert_eq!(v.findings[0].criterion, Some(3));
+        assert_eq!(v.findings[1].criterion, Some(1));
+        assert_eq!(v.findings[2].criterion, None);
+    }
+
+    /// A malformed `criterion` must degrade to `None`, never fail the parse:
+    /// losing attribution may not void an otherwise usable refute. (A number
+    /// literal outside JSON's own range, e.g. `1e400`, is not covered — that
+    /// fails the whole document in `serde_json` before any field is seen.)
+    #[test]
+    fn unusable_criterion_degrades_to_none() {
+        for raw in [r#""none""#, "0", "-1", "3.7", "true", "null", "{}", "[]"] {
+            let text = format!(r#"{{"pass": false, "findings": [{{"criterion": {raw}, "message": "m"}}]}}"#);
+            let v = parse_audit_agent_output(&text)
+                .unwrap_or_else(|e| panic!("criterion {raw} must not fail the parse: {e}"));
+            assert_eq!(v.findings.len(), 1, "criterion {raw} dropped the finding");
+            assert_eq!(v.findings[0].criterion, None, "criterion {raw}");
+        }
+    }
+
+    #[test]
+    fn findings_text_carries_criterion() {
+        let v = parse_audit_agent_output(
+            r#"{"pass": false, "findings": [{"criterion": 2, "severity": "error", "message": "no test"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(v.findings_text(), "1. [error] criterion 2: no test");
+    }
+
+    #[test]
+    fn findings_text_omits_missing_criterion() {
+        let v = parse_audit_agent_output(r#"{"pass": false, "findings": [{"message": "no test"}]}"#)
+            .unwrap();
+        assert_eq!(v.findings_text(), "1. no test");
     }
 }

@@ -16,6 +16,7 @@
 //! The output is inlined as plain text in the nudge body, never as a
 //! file pointer.
 
+use crate::session::goal_plan_md::{header_level, is_any_header, is_section_header};
 use std::path::Path;
 
 /// 8 KiB cap on per-file reads. Each goal nudge fires per turn, so a
@@ -56,26 +57,6 @@ pub(crate) fn first_unchecked_plan_item(path: &Path) -> Option<String> {
         return Some(item);
     }
     extract_first_unchecked(&body)
-}
-
-/// Case-insensitive match of a markdown header line (`#`-prefixed at any
-/// level) against a section `name` ("task checklist", "non-goals", ...).
-fn is_section_header(line: &str, name: &str) -> bool {
-    let trimmed = line.trim_start();
-    if !trimmed.starts_with('#') {
-        return false;
-    }
-    let title = trimmed.trim_start_matches('#').trim();
-    title.eq_ignore_ascii_case(name)
-}
-
-fn is_any_header(line: &str) -> bool {
-    line.trim_start().starts_with('#')
-}
-
-/// Markdown heading level (number of leading `#`), 0 for non-headers.
-fn header_level(line: &str) -> usize {
-    line.trim_start().chars().take_while(|c| *c == '#').count()
 }
 
 /// Iterate checkboxes within the `## Task checklist` section only.

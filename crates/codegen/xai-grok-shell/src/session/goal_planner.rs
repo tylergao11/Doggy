@@ -174,9 +174,19 @@ where
 
 // Constants
 
-/// Telemetry value on `GoalPlannerFired`. Does not cap user-initiated
-/// `/goal resume` retries, which re-run the planner unbounded.
-pub(crate) const GOAL_PLANNER_MAX_RUNS: u32 = 1;
+/// How many times the harness spawns the planner before writing
+/// [`fallback_plan_body`] itself. A planner failure is usually transient
+/// (transport blip, a model that answered without writing the file), and the
+/// run is unattended, so retrying is the harness's job — not the user's.
+///
+/// Does not cap user-initiated `/goal resume` retries, which re-run the
+/// planner unbounded.
+pub(crate) const GOAL_PLANNER_MAX_RUNS: u32 = 3;
+
+/// Delay before re-spawning the planner, multiplied by the attempt number.
+/// Spreads retries over a rate-limit window instead of hammering it.
+pub(crate) const GOAL_PLANNER_RETRY_BACKOFF: std::time::Duration =
+    std::time::Duration::from_secs(2);
 
 /// Same general-purpose inventory each verifier skeptic uses: the
 /// planner reads and greps the workspace and, when web search is
@@ -507,6 +517,19 @@ pub(crate) async fn run_goal_planner(
         ),
     }
 
+    // Criterion dependency contract. A malformed graph NEVER pauses the goal:
+    // the harness resolves every case itself (an unschedulable graph degrades
+    // to serial, an overlapping write scope is ordered by number) so a planner
+    // mistake costs parallelism, not autonomy. Logged so a systematically bad
+    // contract is diagnosable after the fact.
+    if let Some(violations) = contract_violations(inputs.plan_file).await {
+        tracing::warn!(
+            plan_file = %plan_file_str,
+            violations = %violations.join("; "),
+            "goal planner: criterion dependency contract degraded; scheduling conservatively",
+        );
+    }
+
     let latency_ms = started.elapsed().as_millis() as u64;
     emit_event(Event::GoalPlannerCompleted {
         attempt: inputs.attempt,
@@ -515,6 +538,116 @@ pub(crate) async fn run_goal_planner(
     GoalPlannerOutcome::Planned {
         plan_file: inputs.plan_file.to_path_buf(),
         latency_ms,
+    }
+}
+
+/// A complete, schedulable `plan.md` the harness writes itself when the
+/// planner subagent could not produce one.
+///
+/// The run must not stop just because one model call failed, so the harness
+/// supplies its own answer: treat the objective as a single acceptance
+/// criterion. That is the weakest useful contract — no decomposition, so no
+/// parallelism — but it is a valid contract, and the executor and the skeptic
+/// panel judge the objective directly, which is what they would have done for
+/// a one-criterion plan anyway.
+///
+/// Kept deliberately minimal: every section a plan reader needs and nothing
+/// invented on the model's behalf. In particular the verification plan says
+/// only "observe the objective holds", because the harness has no basis to
+/// guess an entry point or a launch check.
+pub(crate) fn fallback_plan_body(objective: &str) -> String {
+    let criterion = one_line(objective);
+    let headline = truncate_chars(&criterion, 120);
+    format!(
+        "# Plan: {headline}\n\
+         \n\
+         ## Goal kind\n\
+         code-change\n\
+         \n\
+         ## Acceptance criteria\n\
+         1. {criterion}\n\
+         \n\
+         ## Acceptance checklist\n\
+         | Exec | Audit | Criterion |\n\
+         |------|-------|-----------|\n\
+         | [ ] | [ ] | {criterion} |\n\
+         \n\
+         ## Criterion dependencies\n\
+         | # | Depends on | Write scope |\n\
+         |---|------------|-------------|\n\
+         | 1 | - | - |\n\
+         \n\
+         ## Verification plan\n\
+         1. gating: observe on the real deliverable that the objective holds as \
+         stated, judging the shipped outcome rather than any self-report.\n\
+         \n\
+         ## Non-goals\n\
+         - Anything the objective does not ask for.\n\
+         \n\
+         ## Assumed scope\n\
+         Unknown — this plan was written by the harness after the planner \
+         subagent failed, so no scope survey was performed.\n\
+         \n\
+         ## Risks / Contradictions\n\
+         - The planner subagent did not produce a plan, so the objective was \
+         not decomposed into independently checkable criteria. Verification \
+         judges the objective as one whole.\n"
+    )
+}
+
+/// Collapse an objective to one line so it fits a markdown table row.
+///
+/// Pipes are left alone on purpose. They do split the cell, but the checklist
+/// reader rejoins the extra cells with `" | "`, so a raw pipe round-trips
+/// exactly — while a `\|` escape does not, because the reader has no escape
+/// handling and would hand back a stray backslash.
+fn one_line(s: &str) -> String {
+    let flattened = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flattened.is_empty() {
+        "Achieve the stated objective.".to_string()
+    } else {
+        flattened
+    }
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    s.chars().take(max).collect::<String>() + "…"
+}
+
+/// Ways the declared criterion dependency contract falls short, as prose
+/// lines, or `None` when it is clean.
+///
+/// Diagnostics only — the scheduler reads the plan through
+/// [`load_criterion_graph`](crate::session::goal_criterion_graph::load_criterion_graph),
+/// which repairs every one of these. A plan that omits `## Criterion
+/// dependencies` is not a violation; it simply runs serially.
+async fn contract_violations(plan_file: &Path) -> Option<Vec<String>> {
+    use crate::session::goal_criterion_graph as graph;
+
+    let body = tokio::fs::read_to_string(plan_file).await.ok()?;
+    let declared = graph::parse_criterion_graph(&body)?;
+    let violations: Vec<String> = declared
+        .validate(criteria_count(&body))
+        .iter()
+        .map(graph::ContractViolation::message)
+        .collect();
+    (!violations.is_empty()).then_some(violations)
+}
+
+/// How many acceptance criteria the plan declares. Prefers the dual checklist,
+/// which the harness has just synthesized and keeps 1:1 with the criteria, and
+/// falls back to the numbered prose list.
+fn criteria_count(body: &str) -> usize {
+    use crate::session::goal_acceptance_checklist as checklist;
+
+    let rows = checklist::parse_dual_rows(body).len();
+    if rows > 0 {
+        rows
+    } else {
+        checklist::extract_numbered_acceptance_criteria(body).len()
     }
 }
 
@@ -802,6 +935,170 @@ mod tests {
         assert_eq!(log.len(), 2, "{log:?}");
         assert_eq!(log[0], "fired");
         assert_eq!(log[1], "completed");
+        let _ = std::fs::remove_file(&plan_file);
+    }
+
+    /// The fallback plan is only useful if every real reader accepts it, so
+    /// parse it with the production readers rather than asserting on substrings.
+    #[test]
+    fn fallback_plan_is_a_valid_contract_for_every_reader() {
+        use crate::session::goal_acceptance_checklist as checklist;
+        use crate::session::goal_criterion_graph as graph;
+
+        let body = fallback_plan_body("make the parser round-trip valid input");
+
+        let criteria = checklist::extract_numbered_acceptance_criteria(&body);
+        assert_eq!(criteria, vec!["make the parser round-trip valid input"]);
+
+        // The dual gate must see exactly one open row, or completion can never
+        // be requested.
+        let rows = checklist::parse_dual_rows(&body);
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].exec);
+        assert!(!rows[0].audit);
+        assert_eq!(rows[0].criterion, "make the parser round-trip valid input");
+        assert!(checklist::has_dual_checklist(&body));
+
+        // And it is already in the canonical shape, so nothing rewrites it.
+        assert_eq!(checklist::ensure_dual_checklist_section(&body), body);
+
+        let g = graph::load_criterion_graph(&body, criteria.len());
+        assert_eq!(g.parallel_waves(), Some(vec![vec![1]]));
+        assert!(g.validate(criteria.len()).is_empty());
+    }
+
+    #[test]
+    fn fallback_plan_survives_hostile_objectives() {
+        use crate::session::goal_acceptance_checklist as checklist;
+
+        // A newline would end the table row outright, and a pipe adds cells —
+        // the criterion text has to survive both intact.
+        let body = fallback_plan_body("add a | b support\nand also\n\ttabs");
+        let rows = checklist::parse_dual_rows(&body);
+        assert_eq!(rows.len(), 1, "the row must stay one row: {body}");
+        assert_eq!(rows[0].criterion, "add a | b support and also tabs");
+        assert_eq!(
+            checklist::extract_numbered_acceptance_criteria(&body).len(),
+            1
+        );
+        // A criterion that is nothing but a pipe still has to come back
+        // non-empty, or the dual gate would skip the row and the goal could
+        // never satisfy its own checklist.
+        assert_eq!(checklist::parse_dual_rows(&fallback_plan_body("|"))[0].criterion, "|");
+
+        // An empty objective still has to yield a checkable criterion rather
+        // than an empty row the dual gate would skip.
+        let empty = fallback_plan_body("   ");
+        let rows = checklist::parse_dual_rows(&empty);
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].criterion.is_empty());
+
+        // A very long objective is truncated in the headline but kept whole in
+        // the criterion, which is what gets judged.
+        let long = "x".repeat(400);
+        let body = fallback_plan_body(&long);
+        assert_eq!(
+            checklist::parse_dual_rows(&body)[0].criterion,
+            long,
+            "the criterion must not be truncated"
+        );
+        assert!(
+            body.lines().next().unwrap().chars().count() < 140,
+            "the headline must be truncated"
+        );
+    }
+
+    /// Autonomy contract: a planner that writes a self-contradictory criterion
+    /// graph must NOT stop the goal. The harness owns the fallback (schedule
+    /// serially), so the run continues and the user is not consulted.
+    #[tokio::test]
+    async fn unschedulable_criterion_contract_still_plans() {
+        let plan_file = tmp_plan_file("cyclic-contract");
+        let spawner = Arc::new(MockSpawner::ok_writes(
+            &plan_file,
+            b"# Plan: foo\n\n## Goal kind\n\ncode-change\n\n\
+              ## Acceptance criteria\n1. alpha\n2. beta\n\n\
+              ## Criterion dependencies\n\
+              | # | Depends on | Write scope |\n\
+              |---|------------|-------------|\n\
+              | 1 | 2 | src/a.rs |\n\
+              | 2 | 1 | src/a.rs |\n",
+        ));
+        let (log, emit) = collect_events();
+
+        let outcome = run_goal_planner(
+            spawner,
+            GoalPlannerInputs {
+                objective: "do X",
+                context: "",
+                plan_file: &plan_file,
+                attempt: 1,
+                model_id: "grok-test",
+                tool_names: &RoleToolNames::inherit_defaults(),
+                inherit_tool_names: &RoleToolNames::inherit_defaults(),
+            },
+            &emit,
+        )
+        .await;
+
+        assert!(
+            matches!(outcome, GoalPlannerOutcome::Planned { .. }),
+            "a bad dependency table must never pause the goal: {outcome:?}",
+        );
+        assert!(
+            !log.lock().unwrap().iter().any(|t| t.starts_with("fail_closed")),
+            "no fail-closed event may be emitted for a repairable contract",
+        );
+        // And the graph the scheduler will actually use is safe.
+        let body = std::fs::read_to_string(&plan_file).unwrap();
+        let graph = crate::session::goal_criterion_graph::load_criterion_graph(&body, 2);
+        assert_eq!(
+            graph.parallel_waves(),
+            Some(vec![vec![1], vec![2]]),
+            "a cycle must degrade to serial, not deadlock",
+        );
+        let _ = std::fs::remove_file(&plan_file);
+    }
+
+    /// A clean contract with two independent criteria is preserved end to end,
+    /// so the plan the planner wrote is what the scheduler fans out on.
+    #[tokio::test]
+    async fn independent_criteria_survive_the_planner_round_trip() {
+        let plan_file = tmp_plan_file("parallel-contract");
+        let spawner = Arc::new(MockSpawner::ok_writes(
+            &plan_file,
+            b"# Plan: foo\n\n## Goal kind\n\ncode-change\n\n\
+              ## Acceptance criteria\n1. alpha\n2. beta\n\n\
+              ## Criterion dependencies\n\
+              | # | Depends on | Write scope |\n\
+              |---|------------|-------------|\n\
+              | 1 | - | src/a.rs |\n\
+              | 2 | - | src/b.rs |\n",
+        ));
+        let (_log, emit) = collect_events();
+
+        let outcome = run_goal_planner(
+            spawner,
+            GoalPlannerInputs {
+                objective: "do X",
+                context: "",
+                plan_file: &plan_file,
+                attempt: 1,
+                model_id: "grok-test",
+                tool_names: &RoleToolNames::inherit_defaults(),
+                inherit_tool_names: &RoleToolNames::inherit_defaults(),
+            },
+            &emit,
+        )
+        .await;
+
+        assert!(matches!(outcome, GoalPlannerOutcome::Planned { .. }));
+        let body = std::fs::read_to_string(&plan_file).unwrap();
+        assert_eq!(
+            crate::session::goal_criterion_graph::load_criterion_graph(&body, 2).parallel_waves(),
+            Some(vec![vec![1, 2]]),
+            "disjoint write scopes with no edges must stay one parallel wave",
+        );
         let _ = std::fs::remove_file(&plan_file);
     }
 

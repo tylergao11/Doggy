@@ -153,6 +153,11 @@ sections, in order. `## Implementation approach` and `## Task checklist` are
 |------|-------|-----------|
 | [ ] | [ ] | <same text as criterion 1> |
 
+## Criterion dependencies
+| # | Depends on | Write scope |
+|---|------------|-------------|
+| 1 | - | <paths criterion 1 may write> |
+
 ## Verification plan
 1. <gating|evidence: action + the observations that MUST be present to pass>
 
@@ -189,6 +194,27 @@ acceptance criterion** (same wording). Columns:
 - **Audit** — leave `[ ]`; the harness sets Audit after independent verification.
 Harness rule: `update_goal(completed: true)` is rejected until every Exec is `[x]`.
 Goal completion requires every Audit `[x]` after a successful audit.
+
+**Criterion dependencies** — REQUIRED, **one row per acceptance criterion**,
+numbered 1..N in criteria order. This table is what lets criteria be
+implemented CONCURRENTLY, so fill it in with care:
+
+- **Depends on** — the criterion numbers that must already hold before this one
+  can be implemented, comma-separated; `-` when it depends on nothing. Declare
+  a dependency ONLY for a real ordering need (criterion 3 extends the thing
+  criterion 1 creates). Every unnecessary edge forces work to wait.
+- **Write scope** — the files/directories/globs this criterion is expected to
+  WRITE (`src/parse/**`, `src/cli.rs`); read-only paths do not belong here.
+  Two criteria that may run at the same time MUST have disjoint write scopes,
+  because two implementers editing one file concurrently lose each other's
+  work. Prefer narrow scopes; a scope like `src/**` makes everything serial.
+
+The harness never stops to ask about this table: overlapping write scopes with
+no dependency are serialized by number, and a table it cannot schedule at all
+(a cycle, a self-dependency, a criterion number that does not exist, a row
+count that disagrees with the criteria) is discarded for a fully serial order.
+Both cases run correctly and SLOWLY — the only cost of getting this wrong is
+that the goal loses all parallelism, so it is worth getting right.
 
 **Verification plan** — how an **independent auditor** can observe each criterion.
 Tag each step `gating` (decides pass/fail) or `evidence` (optional corroboration).

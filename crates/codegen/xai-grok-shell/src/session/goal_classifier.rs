@@ -175,6 +175,12 @@ pub(crate) enum GoalClassifierOutcome {
         /// [`build_gaps_summary`]). Never empty for a real rejection
         /// (≥1 refuter).
         gaps_summary: String,
+        /// Machine-readable projection of the same refuters (see
+        /// [`build_gaps_findings`]), carrying each finding's criterion
+        /// attribution so the completion gate can scope the fix. Empty when
+        /// no refuter emitted structured findings — then `gaps_summary` is
+        /// the only representation and the gate falls back to it.
+        gaps_findings: Vec<crate::session::goal_tracker::ClassifierFinding>,
         /// Blocker bullets grouped by [`SkepticBlocking`] class for the
         /// user-facing auto-pause message (see [`build_pause_summary`]).
         pause_summary: String,
@@ -829,9 +835,53 @@ pub(crate) struct Finding {
     /// `path:line` when code-related, else a short place; may be empty.
     #[serde(default)]
     pub location: String,
+    /// Which acceptance criterion this finding rejects, 1-based to match the
+    /// plan's numbered `## Acceptance criteria`. `None` when the skeptic gave
+    /// no usable attribution; the finding still counts, it just cannot be
+    /// narrowed to one criterion.
+    #[serde(default, deserialize_with = "deserialize_criterion")]
+    pub criterion: Option<u32>,
     /// One-line description.
     #[serde(default)]
     pub detail: String,
+}
+
+/// Lenient 1-based criterion attribution.
+///
+/// Never errors: attribution is best-effort metadata, and rejecting the whole
+/// verdict over a malformed `criterion` would hand a weak model a way to void
+/// its own refute (`parse_verdict_json` returning `None` is a parse failure,
+/// which the caller turns into a synthetic vote). Accepts a JSON number or a
+/// string carrying the first integer it contains (`"3"`, `"criterion 3"`,
+/// `"#3"`); anything else, and `0`, yield `None`.
+fn deserialize_criterion<'de, D>(d: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let value = serde_json::Value::deserialize(d)?;
+    let n = match &value {
+        serde_json::Value::Number(n) => match n.as_u64() {
+            Some(n) => n,
+            None => return Ok(None),
+        },
+        serde_json::Value::String(s) => match first_integer(s) {
+            Some(n) => n,
+            None => return Ok(None),
+        },
+        _ => return Ok(None),
+    };
+    Ok(u32::try_from(n).ok().filter(|n| *n > 0))
+}
+
+/// First run of ASCII digits in `s`, parsed as `u64`.
+fn first_integer(s: &str) -> Option<u64> {
+    let start = s.find(|c: char| c.is_ascii_digit())?;
+    let rest = &s[start..];
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
 }
 
 impl Finding {
@@ -1091,20 +1141,25 @@ pub(crate) fn neutralize_reminder_tags(text: String) -> String {
 /// holding a full multi-point gap list.
 const GAPS_MAX_FINDINGS: usize = 12;
 
-/// Render one structured finding as `kind · location — detail`, dropping
-/// empty segments. Sanitized like evidence (tag-inert, char-capped).
+/// Render one structured finding as `criterion N · kind · location — detail`,
+/// dropping empty segments. The criterion prefix leads because it is the key
+/// the implementer groups fixes by; it is harness-generated from a `u32`, so
+/// only the model-authored tail needs sanitizing (tag-inert, char-capped).
 fn render_finding(f: &Finding) -> String {
     let kind = f.kind.trim();
     let loc = f.location.trim();
     let detail = f.detail.trim();
-    let head = if kind.is_empty() { "finding" } else { kind };
-    let body = match (loc.is_empty(), detail.is_empty()) {
-        (false, false) => format!("{head} · {loc} — {detail}"),
-        (false, true) => format!("{head} · {loc}"),
-        (true, false) => format!("{head} — {detail}"),
-        (true, true) => head.to_string(),
+    let kind = if kind.is_empty() { "finding" } else { kind };
+    let tail = match (loc.is_empty(), detail.is_empty()) {
+        (false, false) => format!("{kind} · {loc} — {detail}"),
+        (false, true) => format!("{kind} · {loc}"),
+        (true, false) => format!("{kind} — {detail}"),
+        (true, true) => kind.to_string(),
     };
-    sanitize_evidence(&body)
+    match f.criterion {
+        Some(c) => format!("criterion {c} · {}", sanitize_evidence(&tail)),
+        None => sanitize_evidence(&tail),
+    }
 }
 
 /// Render one refuter as a sanitized bullet. Prefers structured `findings`
@@ -1157,6 +1212,32 @@ fn build_gaps_summary(results: &[SkepticResult]) -> String {
         .map(render_refuter_bullet)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Machine-readable sibling of [`build_gaps_summary`]: the same refuters in
+/// the same order and under the same per-refuter cap, flattened to one entry
+/// per structured finding so each keeps its own criterion attribution.
+///
+/// `message` is rendered by the same [`render_finding`] the prose bullet uses,
+/// so the two representations of a round can never disagree on wording. A
+/// refuter that produced no structured findings (evidence-only or synthetic
+/// fallback) contributes nothing: attribution it never had must not be
+/// invented here, and `gaps_summary` still carries its bullet.
+fn build_gaps_findings(
+    results: &[SkepticResult],
+) -> Vec<crate::session::goal_tracker::ClassifierFinding> {
+    refuters_by_confidence(results)
+        .into_iter()
+        .flat_map(|r| {
+            r.findings
+                .iter()
+                .take(GAPS_MAX_FINDINGS)
+                .map(|f| crate::session::goal_tracker::ClassifierFinding {
+                    criterion: f.criterion,
+                    message: render_finding(f),
+                })
+        })
+        .collect()
 }
 
 /// Section headers for the auto-pause blocker summary, one per
@@ -2318,6 +2399,7 @@ pub(crate) async fn run_verification_stage(
         GoalClassifierOutcome::NotAchieved {
             details_path: details_raw,
             gaps_summary: build_gaps_summary(&results),
+            gaps_findings: build_gaps_findings(&results),
             pause_summary: build_pause_summary(&results),
             gap_fingerprint,
         }
@@ -2897,6 +2979,72 @@ mod tests {
     }
 
     #[test]
+    fn parse_verdict_json_parses_criterion_attribution() {
+        let body = r##"{
+            "refuted": true,
+            "evidence": "summary",
+            "confidence": "high",
+            "findings": [
+                {"kind": "gap", "criterion": 3, "detail": "no launch observation"},
+                {"kind": "gap", "criterion": "criterion 1", "detail": "parser undriven"},
+                {"kind": "bug", "detail": "unattributed"}
+            ]
+        }"##;
+        let v = parse_verdict_json(body).expect("parses");
+        assert_eq!(v.findings[0].criterion, Some(3));
+        assert_eq!(
+            v.findings[1].criterion,
+            Some(1),
+            "a prose-wrapped number is still usable attribution"
+        );
+        assert_eq!(v.findings[2].criterion, None);
+    }
+
+    /// Attribution is best-effort metadata. A malformed `criterion` must
+    /// degrade to `None` and leave the rest of the verdict intact — if it
+    /// failed the parse, `run_one_skeptic` would substitute a synthetic vote,
+    /// letting a weak model void its own refute by mistyping one field.
+    #[test]
+    fn parse_verdict_json_unusable_criterion_never_voids_the_verdict() {
+        for raw in [r#""none""#, "0", "-1", "3.7", "true", "null", "{}", "[]"] {
+            let body = format!(
+                r#"{{"refuted":true,"evidence":"e","confidence":"high",
+                     "findings":[{{"kind":"gap","criterion":{raw},"detail":"d"}}]}}"#
+            );
+            let v = parse_verdict_json(&body)
+                .unwrap_or_else(|| panic!("criterion {raw} must not void the verdict"));
+            assert!(v.refuted, "criterion {raw}");
+            assert_eq!(v.findings.len(), 1, "criterion {raw} dropped the finding");
+            assert_eq!(v.findings[0].criterion, None, "criterion {raw}");
+            assert_eq!(v.findings[0].detail, "d", "criterion {raw}");
+        }
+    }
+
+    #[test]
+    fn render_finding_leads_with_criterion_when_attributed() {
+        let attributed = Finding {
+            kind: "gap".into(),
+            location: "src/foo.rs:42".into(),
+            criterion: Some(2),
+            detail: "off-by-one".into(),
+        };
+        assert_eq!(
+            render_finding(&attributed),
+            "criterion 2 · gap · src/foo.rs:42 — off-by-one"
+        );
+
+        let unattributed = Finding {
+            criterion: None,
+            ..attributed
+        };
+        assert_eq!(
+            render_finding(&unattributed),
+            "gap · src/foo.rs:42 — off-by-one",
+            "an unattributed finding renders exactly as before"
+        );
+    }
+
+    #[test]
     fn parse_verdict_json_omits_details_md_optional_field() {
         // `details_md` is a harness extension to the literal
         // VERDICT_SCHEMA — only `refuted`, `evidence`, `confidence`
@@ -3230,11 +3378,13 @@ mod tests {
             Finding {
                 kind: "bug".into(),
                 location: "src/foo.rs:42".into(),
+                criterion: None,
                 detail: "off-by-one".into(),
             },
             Finding {
                 kind: "gap".into(),
                 location: String::new(),
+                criterion: None,
                 detail: "criterion 3 undriven".into(),
             },
         ];
@@ -3263,6 +3413,7 @@ mod tests {
         r.findings = vec![Finding {
             kind: "bug".into(),
             location: "src/a.rs:1".into(),
+            criterion: None,
             detail: "wrong index".into(),
         }];
         let body = render_skeptic_panel_details(&[r], 1, 1, false, "vid", 1);
@@ -4207,10 +4358,29 @@ mod tests {
 
     #[test]
     fn kind_lens_selects_per_kind_block_and_empty_for_none() {
-        assert!(kind_lens(Some(GoalKind::CodeChange)).contains("Code-change review lens"));
-        // Browser-load defect rule: Node-only scripts (blank page) are
-        // headlessly provable and must stay part of the fallback bar.
-        assert!(kind_lens(Some(GoalKind::CodeChange)).contains("unguarded `module.exports`"));
+        let code = kind_lens(Some(GoalKind::CodeChange));
+        assert!(code.contains("Code-change review lens"));
+        // Code-change lens focuses on audit floor + headless EXCEPTION; browser
+        // Node-only / `file://` black-page guidance lives in the planner template
+        // (see goal_planner_prompt.md), not in KIND_LENS_CODE_CHANGE.
+        assert!(
+            code.contains("Headless EXCEPTION"),
+            "code-change lens must still ship headless/static fallback guidance",
+        );
+        assert!(
+            code.contains("PRIMARY OBSERVABLE is CORRECT"),
+            "code-change lens must still require observable correctness, not mere presence",
+        );
+        // Planner still ships the browser black-page guidance (kind lens does not).
+        let planner = include_str!("templates/goal_planner_prompt.md");
+        assert!(
+            planner.contains("`module.exports`"),
+            "browser black-page / unguarded module.exports guidance must remain in the planner path",
+        );
+        assert!(
+            planner.contains("file://") || planner.contains("`file:`"),
+            "file:// / file: black-screen guidance must remain in the planner path",
+        );
         assert!(kind_lens(Some(GoalKind::Research)).contains("Research fact-check lens"));
         assert!(kind_lens(Some(GoalKind::Research)).contains("web_fetch"));
         assert!(kind_lens(Some(GoalKind::Analysis)).contains("Analysis soundness lens"));

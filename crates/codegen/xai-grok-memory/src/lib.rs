@@ -27,9 +27,11 @@
 //!
 //! ## Feature Flag
 //!
-//! Memory is gated behind `--experimental-memory` CLI flag or
-//! `GROK_MEMORY=1` environment variable. When disabled, this crate
-//! is not initialized by the host.
+//! Memory is **enabled by default**. Force-disable with `--no-memory`,
+//! `GROK_MEMORY=0`, or `[memory] enabled = false` in config.toml.
+//! `--experimental-memory` / `GROK_MEMORY=1` still force-enable when a lower
+//! layer would otherwise leave it off. When disabled, this crate is not
+//! initialized by the host.
 
 pub mod archive;
 pub mod backend;

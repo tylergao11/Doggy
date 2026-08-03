@@ -1,0 +1,2 @@
+# Goal-role prompt templates: keep LF so pin tests match include_str! on Windows
+crates/codegen/xai-grok-shell/src/session/templates/*.md text eol=lf

@@ -121,11 +121,11 @@ fn with_grok_memory<T>(value: &str, f: impl FnOnce() -> T) -> T {
     with_env_var_opt("GROK_MEMORY", Some(value), f)
 }
 #[test]
-fn memory_config_default_disabled() {
+fn memory_config_default_enabled() {
     without_grok_memory(|| {
         let config = toml::Value::Table(toml::map::Map::new());
         let mem = MemoryConfig::resolve(false, false, &config, None);
-        assert!(! mem.enabled);
+        assert!(mem.enabled, "memory should be enabled by default");
     });
 }
 #[test]

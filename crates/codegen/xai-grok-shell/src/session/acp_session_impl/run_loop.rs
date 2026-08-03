@@ -210,8 +210,9 @@ pub(super) async fn run_session(
             infra_pause_message) = SessionActor::post_turn_goal_degradation_plan(&
             result); session.handle_completion(prompt_id, result). await; session
             .drain_monitor_buffer_to_pending(). await; if let Some(message) =
-            infra_pause_message { session.apply_infra_pause_after_turn_err(message).
-            await; } session.handle_turn_end(turn_succeeded). await; if session
+            infra_pause_message { session
+            .recover_or_pause_after_infra_err(message, completion_tx.clone()). await; }
+            session.handle_turn_end(turn_succeeded). await; if session
             .flush_stranded_interjections(). await {
             tracing::info!("Flushed stranded interjection(s) into prompt turns"); }
             SessionActor::maybe_start_running_task(session.clone(), completion_tx

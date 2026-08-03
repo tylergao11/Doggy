@@ -9,6 +9,18 @@ use super::*;
 /// Compile-time constant for v1; remote tunability is a deferred follow-up.
 pub(super) const GOAL_CONTINUATION_BACKOFF_THRESHOLD: u32 = 3;
 
+/// How `maybe_run_goal_planner` settled, after retries and the harness's own
+/// fallback plan. Only the last two arms leave the goal without a contract,
+/// and neither is something another spawn could fix.
+enum PlannerResolution {
+    /// A plan is on disk — written by the planner subagent or by the harness.
+    Planned(std::path::PathBuf),
+    /// The user cancelled the planner spawn.
+    UserAborted,
+    /// The plan path cannot be written at all.
+    Unwritable,
+}
+
 impl DrainSource {
     /// Consume the source, returning `(input, Option<ack_tx>)`.
     /// `None` means the ack was already resolved.
@@ -914,7 +926,9 @@ impl SessionActor {
     }
 
     /// Load-time safety net: an Active goal restored with `plan_file == None`
-    /// (legacy snapshot) is paused with the canonical message.
+    /// (legacy snapshot) gets a plan written for it rather than pausing —
+    /// `maybe_run_goal_planner` always resolves to a plan on disk or a genuine
+    /// dead end, so the restored goal resumes unattended.
     /// One-shot via `goal_plan_reconciled`; the mid-session retry path lives
     /// in `resume_goal`, not here.
     pub(super) async fn maybe_reconcile_active_goal_without_plan(&self) {
@@ -927,25 +941,98 @@ impl SessionActor {
         if !self.goal_planner_enabled || !self.goal_harness_enabled() {
             return;
         }
-        let needs_pause = {
+        let objective = {
             let tracker = self.goal_tracker.lock();
             match tracker.snapshot() {
-                Some(o) => {
-                    o.status == crate::session::goal_tracker::GoalStatus::Active
-                        && o.plan_file.is_none()
+                Some(o)
+                    if o.status == crate::session::goal_tracker::GoalStatus::Active
+                        && o.plan_file.is_none() =>
+                {
+                    o.objective.clone()
                 }
-                None => false,
+                _ => return,
             }
         };
-        if !needs_pause {
+        self.maybe_run_goal_planner(&objective).await;
+    }
+
+    /// Queue a synthetic prompt turn that puts the model back on the goal.
+    ///
+    /// This is how the harness drives itself: the run loop starts pending
+    /// inputs as soon as the current completion is handled, so queueing here
+    /// continues an unattended run without a user prompt. Mirrors the
+    /// `SessionCommand::GoalSummaryTurn` handler, which builds the same item.
+    ///
+    /// Idempotent against the pending queue — a goal-origin input already
+    /// waiting will drive the goal on its own, and a second copy would run two
+    /// turns for one recovery.
+    pub(super) async fn queue_goal_retry_turn(&self) {
+        let mut state = self.state.lock().await;
+        if state
+            .pending_inputs
+            .iter()
+            .any(|i| matches!(i.origin, super::PromptOrigin::GoalSummary))
+        {
             return;
         }
-        let _ = self
-            .auto_pause_goal_if_active_with_message(
-                crate::session::goal_tracker::GoalPauseReason::User,
-                planner_failure_pause_message(),
-            )
-            .await;
+        let (respond_to, _) = tokio::sync::oneshot::channel();
+        state.pending_inputs.push_back(InputItem {
+            prompt_id: format!("goal-retry-{}", uuid::Uuid::now_v7()),
+            prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(
+                "The previous turn failed for infrastructure reasons, not because the work \
+                 was wrong. Continue the goal from where it stopped."
+                    .to_string(),
+            ))],
+            prompt_mode: crate::session::plan_mode::PromptMode::Agent,
+            trace_gcs_config: None,
+            artifact_tracker: None,
+            client_identifier: None,
+            screen_mode: None,
+            verbatim: true,
+            json_schema: None,
+            origin: super::PromptOrigin::GoalSummary,
+            respond_to,
+            persist_ack: None,
+            parsed_prompt_tx: None,
+            queue_meta: None,
+            send_now: false,
+        });
+    }
+
+    /// Write [`fallback_plan_body`](crate::session::goal_planner::fallback_plan_body)
+    /// to `plan_file`. Returns whether the plan is now on disk.
+    ///
+    /// The last line of defense for an unattended run: the goal has a plan the
+    /// executor and the skeptic panel can read even though the planner
+    /// subagent never delivered one.
+    async fn write_fallback_plan(&self, plan_file: &std::path::Path, objective: &str) -> bool {
+        let body = crate::session::goal_planner::fallback_plan_body(objective);
+        if let Some(parent) = plan_file.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+        match tokio::fs::write(plan_file, body).await {
+            Ok(()) => {
+                tracing::warn!(
+                    plan_file = %plan_file.display(),
+                    "goal planner: exhausted retries; harness wrote a single-criterion \
+                     fallback plan so the goal can proceed unattended",
+                );
+                self.send_slash_command_output(
+                    "Planner subagent failed; continuing with a harness-written plan that \
+                     treats the objective as one acceptance criterion.",
+                )
+                .await;
+                true
+            }
+            Err(err) => {
+                tracing::error!(
+                    plan_file = %plan_file.display(),
+                    error = %err,
+                    "goal planner: fallback plan write failed; goal cannot proceed",
+                );
+                false
+            }
+        }
     }
 
     /// Run the planner subagent for a goal that has no plan yet.
@@ -974,9 +1061,6 @@ impl SessionActor {
                 None => return,
             }
         };
-
-        // `GOAL_PLANNER_MAX_RUNS` is telemetry-only; resume retries are unbounded.
-        let attempt = 1u32;
 
         let model_id = self
             .chat_state_handle
@@ -1031,30 +1115,88 @@ impl SessionActor {
         let current_tokens = self.chat_state_handle.get_total_tokens().await as i64;
         self.emit_goal_planning(current_tokens);
 
-        let outcome = crate::session::goal_planner::run_goal_planner(
-            spawner,
-            crate::session::goal_planner::GoalPlannerInputs {
-                objective,
-                context: &context,
-                plan_file: &plan_file,
-                attempt,
-                // Planner is forced to the parent model (no role override), so the
-                // effective role model is always the parent.
-                model_id: crate::session::goal_planner::effective_role_model_id(None, &model_id),
-                tool_names: &tool_names,
-                inherit_tool_names: &inherit_tool_names,
-            },
-            &|e| self.events.emit(e),
-        )
-        .await;
+        // Unattended-run contract: a planner failure must not stop the goal.
+        // Retry the spawn a bounded number of times, and if the planner still
+        // produces nothing, write the harness's own plan (the objective as a
+        // single criterion) and carry on. The only failure honored as final is
+        // the user aborting, which is the user's decision, not a fault.
+        let mut last_reason = None;
+        let mut planned = None;
+        for attempt in 1..=crate::session::goal_planner::GOAL_PLANNER_MAX_RUNS {
+            if attempt > 1 {
+                tokio::time::sleep(
+                    crate::session::goal_planner::GOAL_PLANNER_RETRY_BACKOFF * (attempt - 1),
+                )
+                .await;
+            }
+            let outcome = crate::session::goal_planner::run_goal_planner(
+                spawner.clone(),
+                crate::session::goal_planner::GoalPlannerInputs {
+                    objective,
+                    context: &context,
+                    plan_file: &plan_file,
+                    attempt,
+                    // Planner is forced to the parent model (no role override), so the
+                    // effective role model is always the parent.
+                    model_id: crate::session::goal_planner::effective_role_model_id(
+                        None, &model_id,
+                    ),
+                    tool_names: &tool_names,
+                    inherit_tool_names: &inherit_tool_names,
+                },
+                &|e| self.events.emit(e),
+            )
+            .await;
 
-        // Seal the planner's synthetic `task` pair into its own harness trace
-        // turn so it uploads as a sibling `turn_{N}` artifact (the planner is
-        // represented by its own turn). No-op when the spawn recorded nothing.
-        self.chat_state_handle.flush_harness_trace_turn();
+            // Seal the planner's synthetic `task` pair into its own harness
+            // trace turn so it uploads as a sibling `turn_{N}` artifact (the
+            // planner is represented by its own turn). Per attempt, so a
+            // retried planner does not merge two spawns into one turn.
+            self.chat_state_handle.flush_harness_trace_turn();
+
+            match outcome {
+                crate::session::goal_planner::GoalPlannerOutcome::Planned { plan_file, .. } => {
+                    planned = Some(plan_file);
+                    break;
+                }
+                crate::session::goal_planner::GoalPlannerOutcome::FailClosed { reason, .. } => {
+                    last_reason = Some(reason);
+                    if matches!(
+                        reason,
+                        crate::session::events::GoalPlannerFailClosedReason::Aborted
+                    ) {
+                        break;
+                    }
+                    tracing::warn!(
+                        attempt,
+                        max_runs = crate::session::goal_planner::GOAL_PLANNER_MAX_RUNS,
+                        reason = reason.as_const_str(),
+                        "goal planner: attempt failed; retrying",
+                    );
+                }
+            }
+        }
+
+        let outcome = match planned {
+            Some(p) => PlannerResolution::Planned(p),
+            None if matches!(
+                last_reason,
+                Some(crate::session::events::GoalPlannerFailClosedReason::Aborted)
+            ) =>
+            {
+                PlannerResolution::UserAborted
+            }
+            None => match self.write_fallback_plan(&plan_file, objective).await {
+                true => PlannerResolution::Planned(plan_file.clone()),
+                // Nothing left to try: the harness cannot write to the plan
+                // path at all, so there is no contract for the executor or the
+                // panel to read and the goal genuinely cannot proceed.
+                false => PlannerResolution::Unwritable,
+            },
+        };
 
         match outcome {
-            crate::session::goal_planner::GoalPlannerOutcome::Planned { plan_file, .. } => {
+            PlannerResolution::Planned(plan_file) => {
                 // Record `plan_file`, then snapshot the planner's ORIGINAL plan
                 // as the immutable baseline the verifier diffs later edits
                 // against. Capture once: `maybe_run_goal_planner` only runs when
@@ -1092,7 +1234,9 @@ impl SessionActor {
                     }
                 }
             }
-            crate::session::goal_planner::GoalPlannerOutcome::FailClosed { .. } => {
+            // Both remaining arms are user intent or a dead filesystem — the
+            // two things retrying cannot fix.
+            PlannerResolution::UserAborted | PlannerResolution::Unwritable => {
                 let _ = self
                     .auto_pause_goal_if_active_with_message(
                         crate::session::goal_tracker::GoalPauseReason::User,

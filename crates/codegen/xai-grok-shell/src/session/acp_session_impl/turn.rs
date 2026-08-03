@@ -1333,6 +1333,9 @@ impl SessionActor {
         if turn_succeeded && goal_active_now {
             self.goal_continuation_streak
                 .store(0, std::sync::atomic::Ordering::Relaxed);
+            // A turn got through, so the infra retry budget is refilled: only
+            // consecutive failures should ever exhaust it.
+            self.goal_tracker.lock().clear_infra_failure_streak();
             // Budget still applies on success: spend may have crossed the
             // cap during the last in-turn doggy rounds.
             let current_tokens = self.chat_state_handle.get_total_tokens().await as i64;

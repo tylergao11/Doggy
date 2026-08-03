@@ -13,23 +13,23 @@ Without memory, each Grok session starts fresh: the model knows nothing about pr
 - Carry architectural decisions forward across sessions.
 - Avoid re-asking questions it already has answers to.
 
-Memory is experimental and disabled by default.
+Memory is **enabled by default**. You can turn it off per session or in config.
 
 ---
 
-## Enabling Memory
+## Disabling Memory
 
 ### Per-Session Flag
 
 ```bash
-grok --experimental-memory
+doggy --no-memory
 ```
 
 ### Environment Variable
 
 ```bash
-export GROK_MEMORY=1
-grok
+export GROK_MEMORY=0
+doggy
 ```
 
 ### Config File (Persistent)
@@ -37,21 +37,21 @@ grok
 ```toml
 # ~/.Doggy/config.toml
 [memory]
-enabled = true
+enabled = false
 ```
 
-### Force-Disable
+### Force-Enable
 
-To disable memory even when other settings enable it:
+To re-enable when config or env would leave it off:
 
 ```bash
-grok --no-memory
+doggy --experimental-memory
 ```
 
 Or:
 
 ```bash
-export GROK_MEMORY=0
+export GROK_MEMORY=1
 ```
 
 The `--no-memory` flag has absolute highest priority and always disables memory.
@@ -72,10 +72,10 @@ You can also toggle from inside the `/memory` modal by pressing `t`.
 ### Priority Order
 
 1. `--no-memory` CLI flag (always disables)
-2. `--experimental-memory` CLI flag (enables)
+2. `--experimental-memory` CLI flag (force-enables)
 3. `GROK_MEMORY` env var: `1`/`true` enables, `0`/`false` disables
 4. `[memory]` section in config.toml
-5. Default: disabled
+5. Default: **enabled**
 
 ---
 
@@ -506,9 +506,9 @@ enabled = true    # default
 
 ### Memory Not Working
 
-1. Verify memory is enabled: check `grok inspect` output.
-2. Check the flag: `grok --experimental-memory` or `GROK_MEMORY=1`.
-3. Check for `--no-memory` or `GROK_MEMORY=0` overriding your config.
+1. Verify memory is enabled: check `doggy inspect` output (enabled by default).
+2. Check for `--no-memory` or `GROK_MEMORY=0` overriding the default.
+3. Or force-enable with `doggy --experimental-memory` / `GROK_MEMORY=1`.
 
 ### Memory Not Appearing in Sessions
 

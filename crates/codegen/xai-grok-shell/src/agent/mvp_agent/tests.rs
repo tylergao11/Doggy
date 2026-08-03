@@ -1121,9 +1121,12 @@ fn make_test_handle(
     let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
     let (hunk_event_tx, _hunk_event_rx) = tokio::sync::mpsc::unbounded_channel();
     let hunk_cancel = tokio_util::sync::CancellationToken::new();
+    // Platform-absolute temp dir (Windows rejects "/tmp" as NotAbsolute).
+    let tmp = std::env::temp_dir();
+    let tmp_abs = xai_grok_paths::AbsPathBuf::new(tmp.clone()).expect("temp_dir absolute");
     let hunk_tracker_handle = xai_hunk_tracker::HunkTrackerActor::spawn(
         "test".to_string(),
-        std::path::PathBuf::from("/tmp"),
+        tmp.clone(),
         hunk_event_tx,
         xai_hunk_tracker::TrackingMode::AllDirty,
         hunk_cancel,
@@ -1137,7 +1140,7 @@ fn make_test_handle(
         )),
         info: crate::session::info::Info {
             id: acp::SessionId::new("test"),
-            cwd: "/tmp".to_string(),
+            cwd: tmp.to_string_lossy().into_owned(),
         },
         max_turns: None,
         hunk_tracker_handle,
@@ -1153,10 +1156,8 @@ fn make_test_handle(
         upload_queue: Arc::new(OnceLock::new()),
         upload_failures_since_success: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         tool_context: crate::tools::ToolContext::new_local_context(
-            xai_grok_paths::AbsPathBuf::new(std::path::PathBuf::from("/tmp")).unwrap(),
-            std::sync::Arc::new(xai_grok_workspace::file_system::LocalFs::new(
-                std::path::PathBuf::from("/tmp"),
-            )),
+            tmp_abs,
+            std::sync::Arc::new(xai_grok_workspace::file_system::LocalFs::new(tmp.clone())),
             std::sync::Arc::new(crate::terminal::LocalTerminalRunner),
         ),
         model_id: acp::ModelId::new(model),
@@ -1169,7 +1170,7 @@ fn make_test_handle(
         code_nav_enabled: false,
         ask_user_question_enabled: true,
         plan_mode: std::sync::Arc::new(parking_lot::Mutex::new(
-            crate::session::plan_mode::PlanModeTracker::new(std::path::PathBuf::from("/tmp")),
+            crate::session::plan_mode::PlanModeTracker::new(tmp),
         )),
         force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         permission_handle: xai_grok_workspace::permission::PermissionHandle::allow_all(),

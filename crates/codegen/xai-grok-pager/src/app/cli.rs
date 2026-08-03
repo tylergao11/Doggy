@@ -604,7 +604,7 @@ pub struct PagerArgs {
     /// Disable structured question prompts from the agent.
     #[arg(long = "no-ask-user", hide = true)]
     pub no_ask_user: bool,
-    /// Enable cross-session memory.
+    /// Force-enable cross-session memory (memory is on by default).
     #[arg(long = "experimental-memory", conflicts_with = "no_memory")]
     pub experimental_memory: bool,
     /// Disable cross-session memory for this session.

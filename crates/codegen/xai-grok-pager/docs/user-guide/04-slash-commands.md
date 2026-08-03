@@ -247,7 +247,7 @@ If a session still has a leftover plan file, open its preview. Aliases: `/show-p
 
 ## Memory
 
-The `/flush`, `/dream`, and `/memory` commands require `--experimental-memory` or `GROK_MEMORY=1`. `/remember` is always available.
+The `/flush`, `/dream`, and `/memory` commands require memory to be enabled (the default). Disable with `--no-memory` or `GROK_MEMORY=0`. `/remember` is always available.
 
 ### `/memory`
 
