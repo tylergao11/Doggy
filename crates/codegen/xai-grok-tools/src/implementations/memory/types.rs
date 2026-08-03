@@ -51,3 +51,26 @@ pub struct MemoryGetOutput {
     /// File content (optionally line-limited).
     pub content: String,
 }
+
+/// Input for the `memory_write` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct MemoryWriteInput {
+    /// Mutation action: `"add"`, `"replace"`, or `"remove"`.
+    pub action: String,
+    /// Target scope: `"workspace"` (default) or `"global"`.
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// Entry body for `add` / `replace`. Required for those actions.
+    #[serde(default)]
+    pub content: Option<String>,
+    /// Unique substring locating the target entry for `replace` / `remove`.
+    #[serde(default)]
+    pub old_text: Option<String>,
+}
+
+/// Output schema for `memory_write` (used for JSON Schema generation only).
+#[derive(Debug, JsonSchema)]
+pub struct MemoryWriteOutput {
+    /// JSON result text (success / overflow / error).
+    pub result: String,
+}

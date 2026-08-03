@@ -117,6 +117,7 @@ pub fn canonical_input(input: &ToolInput) -> Option<serde_json::Value> {
         | ToolInput::CodexGrepFiles(_)
         | ToolInput::MemorySearch(_)
         | ToolInput::MemoryGet(_)
+        | ToolInput::MemoryWrite(_)
         | ToolInput::SearchTool(_)
         | ToolInput::UseTool(_)
         | ToolInput::EnterPlanMode(_)

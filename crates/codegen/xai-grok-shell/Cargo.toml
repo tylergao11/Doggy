@@ -184,6 +184,7 @@ windows = { workspace = true }
 criterion = { workspace = true }
 filetime = { workspace = true }
 tempfile = { workspace = true }
+xai-test-utils = { workspace = true }
 xai-grok-memory = { workspace = true, features = ["test-support"] }
 xai-grok-workspace = { workspace = true, features = ["test-support"] }
 xai-grok-config = { workspace = true, features = [] }

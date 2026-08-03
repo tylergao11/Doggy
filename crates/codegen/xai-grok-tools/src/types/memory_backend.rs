@@ -95,10 +95,18 @@ pub struct MemorySearchResult {
     pub created_at: Option<i64>,
 }
 
-/// Backend-agnostic interface for memory queries.
+/// Outcome of writing curated long-term MEMORY.md via [`MemoryBackend::write_curated_memory`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CuratedWriteOutcome {
+    /// True when the write was intentionally skipped (ephemeral workspace scope).
+    pub skipped_ephemeral: bool,
+}
+
+/// Backend-agnostic interface for memory queries and curated MEMORY.md writes.
 ///
 /// Implementations must be `Send + Sync` to be stored in `Arc<dyn MemoryBackend>`
-/// on `SessionContext`. All methods are `&self` — no mutation through the trait.
+/// on `SessionContext`. Search methods are read-only; curated write methods
+/// mutate MEMORY.md on disk (not the search index — the file watcher reindexes).
 ///
 /// `search` is async because hybrid search may need to call an embedding API
 /// to vectorize the query for KNN lookup.
@@ -149,6 +157,35 @@ pub trait MemoryBackend: Send + Sync {
     /// the previous hardcoded value.
     fn default_search_min_score(&self) -> f64 {
         0.0
+    }
+
+    /// Read curated MEMORY.md for `scope` (`"global"` or `"workspace"`).
+    /// Missing file → empty string.
+    fn read_curated_memory(
+        &self,
+        _scope: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        Err("curated memory read is not supported by this backend".into())
+    }
+
+    /// Overwrite curated MEMORY.md for `scope` with `content`.
+    /// Does not enforce char limits (callers gate capacity).
+    fn write_curated_memory(
+        &self,
+        _scope: &str,
+        _content: &str,
+    ) -> Result<CuratedWriteOutcome, Box<dyn std::error::Error + Send + Sync>> {
+        Err("curated memory write is not supported by this backend".into())
+    }
+
+    /// Whether workspace-scoped writes are ephemeral no-ops.
+    fn is_ephemeral_workspace(&self) -> bool {
+        false
+    }
+
+    /// Per-scope curated MEMORY.md character limit for `memory_write`.
+    fn curated_char_limit(&self) -> u64 {
+        2200
     }
 }
 

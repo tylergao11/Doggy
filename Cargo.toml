@@ -71,6 +71,7 @@ members = [
     "crates/common/xai-computer-hub-sdk",
     "crates/common/xai-grok-compaction",
     "crates/common/xai-interjection-core",
+    "crates/common/xai-test-utils",
     "crates/common/xai-tool-protocol",
     "crates/common/xai-tool-runtime",
     "crates/common/xai-tool-types",
@@ -308,6 +309,7 @@ xai-ratatui-inline = { path = "crates/codegen/xai-ratatui-inline" }
 xai-ratatui-textarea = { path = "crates/codegen/xai-ratatui-textarea" }
 xai-sqlite-journal = { path = "crates/codegen/xai-sqlite-journal" }
 xai-system-power = { path = "crates/codegen/xai-system-power" }
+xai-test-utils = { path = "crates/common/xai-test-utils" }
 xai-token-estimation = { path = "crates/codegen/xai-token-estimation" }
 xai-tool-protocol = { path = "crates/common/xai-tool-protocol" }
 xai-tool-runtime = { path = "crates/common/xai-tool-runtime" }

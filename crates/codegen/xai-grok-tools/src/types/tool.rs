@@ -87,6 +87,7 @@ pub enum ToolKind {
     Skill,
     MemorySearch,
     MemoryGet,
+    MemoryWrite,
     Task,
     EnterPlan,
     ExitPlan,

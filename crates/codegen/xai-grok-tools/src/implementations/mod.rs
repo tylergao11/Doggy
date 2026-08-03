@@ -19,7 +19,7 @@ pub use grok_build::{
     ListDirTool, ReadFileTool, SearchReplaceTool, TaskOutputTool, TaskTool, TodoWriteTool,
     WaitTasksTool, WebFetchTool, WebSearchTool,
 };
-pub use memory::{MemoryGetImpl, MemorySearchImpl};
+pub use memory::{MemoryGetImpl, MemorySearchImpl, MemoryWriteImpl};
 pub use opencode::{
     OpenCodeBashTool, OpenCodeEditTool, OpenCodeGlobTool, OpenCodeGrepTool, OpenCodeReadTool,
     OpenCodeSkillTool, OpenCodeTodoWriteTool, OpenCodeWriteTool,
