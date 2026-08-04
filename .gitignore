@@ -35,6 +35,12 @@ __pycache__/
 .venv/
 venv/
 
+# Ad-hoc local probes / test dumps (do not commit)
+/tmp_*
+tmp_*.txt
+tmp_*.rs
+tmp_*.py
+
 # One-off rebrand / migration helpers (local only)
 scripts/_*.py
 scripts/fix_ui_branding.py

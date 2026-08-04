@@ -23,7 +23,7 @@ use ratatui::text::{Line, Span};
 
 use super::context_bar::SEPARATOR;
 use super::turn_status::SPINNER_DIVISOR;
-use crate::app::agent::{GoalDisplayPhase, GoalDisplayState, GoalDisplayStatus};
+use crate::app::agent::{GoalCriterion, GoalDisplayPhase, GoalDisplayState, GoalDisplayStatus};
 use crate::app::agent_view::McpInitProgress;
 use crate::theme::Theme;
 
@@ -321,11 +321,21 @@ pub fn criteria_progress_label(goal: &GoalDisplayState) -> Option<String> {
     }
     let verified = goal.criteria.iter().filter(|c| c.audit).count();
     let deferred = goal.criteria.iter().filter(|c| c.deferred).count();
-    let in_flight = goal
+    let remaining: Vec<&GoalCriterion> = goal
         .criteria
         .iter()
         .filter(|c| !c.audit && !c.deferred)
-        .count();
+        .collect();
+    // Only the earliest unfinished wave is running; later waves are still
+    // blocked on it. Counting those too would make the segment a restatement of
+    // `total - verified` and report a fan-out the run does not have. A serial
+    // plan carries no wave at all, and there every open criterion is the
+    // schedule.
+    let current_wave = remaining.iter().filter_map(|c| c.wave).min();
+    let in_flight = match current_wave {
+        Some(wave) => remaining.iter().filter(|c| c.wave == Some(wave)).count(),
+        None => remaining.len(),
+    };
     let mut out = format!("{verified}/{total} ✓");
     if in_flight > 0 {
         out.push_str(&format!(" · {in_flight} ▸"));
@@ -377,7 +387,6 @@ mod tests {
 
     #[test]
     fn criteria_progress_label_reports_verified_in_flight_and_deferred() {
-        use crate::app::agent::GoalCriterion;
         let criterion = |number: u32, audit: bool, deferred: bool| GoalCriterion {
             number,
             text: "c".into(),
@@ -426,6 +435,48 @@ mod tests {
             criteria_progress_label(&goal).as_deref(),
             Some("3/3 ✓"),
             "a finished goal shows no in-flight or deferred segment"
+        );
+    }
+
+    #[test]
+    fn criteria_progress_label_counts_only_the_current_wave_as_in_flight() {
+        let criterion = |number: u32, wave: u32, audit: bool| GoalCriterion {
+            number,
+            text: "c".into(),
+            exec: audit,
+            audit,
+            depends_on: Vec::new(),
+            wave: Some(wave),
+            deferred: false,
+        };
+        let mut goal = make_goal(
+            GoalDisplayStatus::Active,
+            GoalDisplayPhase::Executing,
+            None,
+            0,
+            0,
+        );
+        goal.criteria = vec![
+            criterion(1, 0, false),
+            criterion(2, 0, false),
+            criterion(3, 0, false),
+            criterion(4, 1, false),
+            criterion(5, 2, false),
+        ];
+        assert_eq!(
+            criteria_progress_label(&goal).as_deref(),
+            Some("0/5 ✓ · 3 ▸"),
+            "wave 2 and 3 are blocked on wave 1, so counting them would claim a \
+             fan-out the run does not have"
+        );
+
+        for c in goal.criteria.iter_mut().take(3) {
+            c.audit = true;
+        }
+        assert_eq!(
+            criteria_progress_label(&goal).as_deref(),
+            Some("3/5 ✓ · 1 ▸"),
+            "finishing a wave must advance the in-flight count to the next one"
         );
     }
 
