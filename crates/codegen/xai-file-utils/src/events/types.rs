@@ -178,6 +178,38 @@ pub enum Event {
         landed: Vec<u32>,
         latency_ms: u64,
     },
+    /// The goal plan was amended in place, append-only, from what a wave was
+    /// observed to write. Emitted only when something reached the file.
+    ///
+    /// `rejected` carries the `Rejection` discriminators in
+    /// `xai-grok-shell::session::goal_replan` for the changes that were refused.
+    /// A producer that is systematically wrong shows up here as a rejection
+    /// stream with no accompanying change, which is otherwise invisible: a
+    /// refused amendment leaves the plan byte-identical.
+    GoalPlanAmended {
+        appended: Vec<u32>,
+        scopes_widened: Vec<u32>,
+        edges_added: usize,
+        rejected: Vec<&'static str>,
+    },
+    /// The amendment writer ran, because an audit round produced findings that
+    /// matched no acceptance criterion.
+    ///
+    /// Emitted for every run, including the ones that change nothing — "the
+    /// contract was already complete" and "the amender never ran" look
+    /// identical in the plan file, and only the first means the loop is
+    /// working. Pair with [`Event::GoalPlanAmended`] to see how much of what
+    /// was proposed actually survived the append-only checks.
+    GoalPlanAmenderRan {
+        /// Findings with no criterion attribution — the trigger.
+        unattributed: usize,
+        /// Criteria the amender proposed. `0` is a normal answer: the gaps were
+        /// already covered by criteria the auditor failed to cite.
+        proposed: usize,
+        /// The run failed and was skipped rather than proposing nothing.
+        failed_open: bool,
+        latency_ms: u64,
+    },
     /// Fan-out was configured but the round ran serially anyway. `reason` is one
     /// of the `FanoutDeclined` discriminators in
     /// `xai-grok-shell::session::goal_fanout`. Not emitted for the ordinary
@@ -813,6 +845,47 @@ mod tests {
         let v = serde_json::to_value(&declined).unwrap();
         assert_eq!(v["type"], "goal_fanout_declined");
         assert_eq!(v["reason"], "worktrees_disposed");
+    }
+
+    #[test]
+    fn goal_plan_amended_serializes_what_changed_and_what_was_refused() {
+        // Both halves ship: an amendment that applied one change and refused
+        // three is the signal that a producer is drifting, and it is invisible
+        // in the plan file itself.
+        let ev = Event::GoalPlanAmended {
+            appended: vec![4],
+            scopes_widened: vec![1, 2],
+            edges_added: 1,
+            rejected: vec!["edge_would_cycle", "undeclared_scope"],
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "goal_plan_amended");
+        assert_eq!(v["appended"], serde_json::json!([4]));
+        assert_eq!(v["scopes_widened"], serde_json::json!([1, 2]));
+        assert_eq!(v["edges_added"], 1);
+        assert_eq!(
+            v["rejected"],
+            serde_json::json!(["edge_would_cycle", "undeclared_scope"])
+        );
+    }
+
+    #[test]
+    fn goal_plan_amender_ran_serializes_a_no_op_run() {
+        // The zero-proposal run is the one that must stay visible: it is the
+        // difference between "the contract was already complete" and "the
+        // amender never fired", which the plan file cannot tell apart.
+        let ev = Event::GoalPlanAmenderRan {
+            unattributed: 2,
+            proposed: 0,
+            failed_open: false,
+            latency_ms: 1200,
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "goal_plan_amender_ran");
+        assert_eq!(v["unattributed"], 2);
+        assert_eq!(v["proposed"], 0);
+        assert_eq!(v["failed_open"], false);
+        assert_eq!(v["latency_ms"], 1200);
     }
 
     #[test]

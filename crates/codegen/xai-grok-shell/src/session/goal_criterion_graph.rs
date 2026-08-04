@@ -424,7 +424,7 @@ pub(crate) fn build_criteria_view(
 }
 
 /// A criterion index from a cell like `2`, `#2`, or `criterion 2`.
-fn parse_number(cell: &str) -> Option<u32> {
+pub(crate) fn parse_number(cell: &str) -> Option<u32> {
     let digits: String = cell
         .trim()
         .chars()
@@ -436,7 +436,7 @@ fn parse_number(cell: &str) -> Option<u32> {
 
 /// Split a cell into entries on commas/semicolons/whitespace, dropping the
 /// several ways a model writes "nothing here".
-fn parse_list(cell: &str) -> Vec<String> {
+pub(crate) fn parse_list(cell: &str) -> Vec<String> {
     let t = cell.trim().trim_matches('`');
     if matches!(
         t.to_ascii_lowercase().as_str(),
@@ -475,7 +475,7 @@ fn overlapping_scope(a: &[String], b: &[String]) -> Option<String> {
 }
 
 /// Whether two path patterns can name the same file.
-fn paths_overlap(a: &str, b: &str) -> bool {
+pub(crate) fn paths_overlap(a: &str, b: &str) -> bool {
     let (a, b) = (normalize_scope(a), normalize_scope(b));
     // Compare only the literal prefix before any wildcard: `src/a/**` and
     // `src/a/b.rs` overlap, and a pattern we cannot expand degrades to its
@@ -485,7 +485,7 @@ fn paths_overlap(a: &str, b: &str) -> bool {
     prefix_at_boundary(&la, &lb) || prefix_at_boundary(&lb, &la)
 }
 
-fn normalize_scope(s: &str) -> String {
+pub(crate) fn normalize_scope(s: &str) -> String {
     let s = s.trim().replace('\\', "/");
     let s = s.trim_start_matches("./").trim_start_matches('/');
     s.trim_end_matches('/').to_string()

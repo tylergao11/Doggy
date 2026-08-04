@@ -786,6 +786,13 @@ impl SessionActor {
                         "failed to clear Acceptance checklist Audit marks on NotAchieved"
                     );
                 }
+                // The findings that forced the full clear above are the ones no
+                // criterion owns. Give them one, so the next round can schedule
+                // and audit that work instead of paying for it goal-wide again.
+                // Fail-open and capped; runs after the clear so a slow or
+                // failing amender cannot delay returning work to execution.
+                self.amend_plan_for_unattributed_findings(&gaps_findings)
+                    .await;
                 {
                     let mut tracker = self.goal_tracker.lock();
                     Self::record_verdict_on_orchestration(

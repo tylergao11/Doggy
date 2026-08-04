@@ -504,6 +504,13 @@ pub(crate) fn skeptic_scratch_dir(verifier_id: &str, idx: u32) -> PathBuf {
     goal_scratch_root(verifier_id).join(format!("skeptic-{idx}"))
 }
 
+/// Where the amendment writer leaves its proposal. One path per goal, not per
+/// round: the runner deletes it before each spawn, so a round can only ever
+/// read back its own answer.
+pub(crate) fn amendment_proposal_file(verifier_id: &str) -> PathBuf {
+    goal_scratch_root(verifier_id).join("amendment.json")
+}
+
 /// One structured verifier finding, persisted alongside the prose gap
 /// summary so the completion gate can scope a fix to the criteria that were
 /// actually rejected.
@@ -659,6 +666,12 @@ pub struct GoalOrchestration {
     /// for this goal. Reset only when the goal is recreated.
     #[serde(default)]
     pub classifier_runs_attempted: u32,
+    /// Times the amendment writer has run for this goal. Persisted, not kept
+    /// in memory, because the cap it feeds has to survive a pause/resume: a
+    /// goal that could re-earn its amendment budget by pausing would have no
+    /// cap at all.
+    #[serde(default)]
+    pub amender_runs: u32,
     /// Worker rounds since the last verification fired: `+1` per
     /// continuation build, reset to 0 when a classifier attempt is
     /// reserved. Drives the re-verify escalation.
@@ -1137,6 +1150,7 @@ impl GoalTracker {
             pause_message: None,
             verifier_id,
             classifier_runs_attempted: 0,
+            amender_runs: 0,
             rounds_since_verify: 0,
             classifier_max_runs: None,
             last_classifier_verdict: None,
@@ -1635,6 +1649,27 @@ impl GoalTracker {
         }
     }
 
+    /// Claim one amendment-writer run under a single lock, returning `false`
+    /// when the goal has spent its budget.
+    ///
+    /// The budget exists because the amender is the one producer that can move
+    /// the finish line. Each run it makes may add criteria that must then pass
+    /// audit on their own, so an uncapped amender could answer every rejection
+    /// with more contract and never converge. Claimed BEFORE the spawn, not
+    /// after a successful one: a run that fails or proposes nothing still spent
+    /// a round's worth of evidence, and retrying it against the same findings
+    /// would just re-ask a question already answered.
+    pub fn claim_amender_run(&mut self, max_runs: u32) -> bool {
+        let Some(o) = self.orchestration.as_mut() else {
+            return false;
+        };
+        if o.amender_runs >= max_runs {
+            return false;
+        }
+        o.amender_runs += 1;
+        true
+    }
+
     /// Revoke the cap bonus granted by [`Self::claim_strategist_fire`] when
     /// the strategist delivered no restructure. `last_strategist_fired_at`
     /// keeps the claim so the next fire still waits a full window.
@@ -1712,6 +1747,7 @@ pub(crate) fn make_base_orchestration() -> GoalOrchestration {
         pause_message: None,
         verifier_id: generate_verifier_id(),
         classifier_runs_attempted: 0,
+        amender_runs: 0,
         rounds_since_verify: 0,
         classifier_max_runs: None,
         last_classifier_verdict: None,
@@ -2528,6 +2564,21 @@ mod tests {
         let o = t.snapshot().unwrap();
         assert_eq!(o.last_strategist_fired_at, 0, "no fire => marker untouched");
         assert_eq!(o.strategist_cap_bonus, 0, "no fire => no cap bonus");
+    }
+
+    #[test]
+    fn amender_runs_are_capped_per_goal_and_survive_a_pause() {
+        let mut t = make_tracker();
+        activate_tracker(&mut t);
+        assert!(t.claim_amender_run(2));
+        assert!(t.claim_amender_run(2));
+        assert!(
+            !t.claim_amender_run(2),
+            "a third run must not be claimable under a cap of 2",
+        );
+        // The count lives on the persisted orchestration, so a pause/resume
+        // cycle cannot hand the goal a fresh amendment budget.
+        assert_eq!(t.snapshot().unwrap().amender_runs, 2);
     }
 
     /// A strategist fire grants the cap bonus; reset clears it.

@@ -314,6 +314,7 @@ pub(crate) mod goal_orchestrator;
 pub(crate) mod goal_plan_md;
 pub(crate) mod goal_plan_write;
 pub(crate) mod goal_planner;
+pub(crate) mod goal_replan;
 pub(crate) mod goal_role_tools;
 pub(crate) mod goal_stop_detector;
 pub(crate) mod goal_strategist;

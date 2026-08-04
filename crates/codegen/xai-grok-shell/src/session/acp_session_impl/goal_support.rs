@@ -573,25 +573,194 @@ impl super::SessionActor {
             .filter(|m| m.landed())
             .map(crate::session::goal_fanout::MergeOutcome::criterion)
             .collect();
+        let plan = self.goal_tracker.lock().plan_path();
         // Exec marks are set by the parent, from the merge result — never by the
         // worker that wrote the code. A criterion that conflicted or whose
         // worker died stays unticked and remains open work.
-        if !landed.is_empty() {
-            let plan = self.goal_tracker.lock().plan_path();
-            if let Err(e) =
-                crate::session::goal_acceptance_checklist::set_exec_marks_for_criteria(
-                    &plan, &landed, true,
-                )
-            {
-                tracing::warn!(error = %e, "criterion wave: could not set Exec marks");
-            }
+        if !landed.is_empty()
+            && let Err(e) = crate::session::goal_acceptance_checklist::set_exec_marks_for_criteria(
+                &plan, &landed, true,
+            )
+        {
+            tracing::warn!(error = %e, "criterion wave: could not set Exec marks");
         }
+        self.record_observed_writes(&plan, &merges);
         self.events.emit(crate::session::events::Event::GoalFanoutFinished {
             criteria: numbers,
             landed: landed.clone(),
             latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         });
         Some(render_wave_report(&workers, &merges))
+    }
+
+    /// Write what the wave actually touched back into the plan's write scopes.
+    ///
+    /// A merge conflict means the plan claimed two criteria were independent
+    /// and they were not. Without this the same pair is scheduled together
+    /// again next round and collides again, because nothing the wave learned
+    /// reached the contract — the conflict was reported to the model as prose
+    /// and forgotten.
+    ///
+    /// Append-only, so this can run unattended: it can only add paths to a
+    /// declared scope, which costs parallelism and never grants any. See
+    /// [`crate::session::goal_replan`] for what the amendment layer refuses.
+    fn record_observed_writes(
+        &self,
+        plan: &std::path::Path,
+        merges: &[crate::session::goal_fanout::MergeOutcome],
+    ) {
+        use crate::session::goal_replan::{amend_plan_on_disk, amendment_from_observed_writes};
+        let amendment =
+            amendment_from_observed_writes(&crate::session::goal_fanout::observed_writes(merges));
+        if amendment.is_empty() {
+            return;
+        }
+        match amend_plan_on_disk(plan, &amendment) {
+            Ok(report) => self.emit_plan_amended(&report),
+            Err(e) => tracing::warn!(error = %e, "criterion wave: could not amend the plan"),
+        }
+    }
+
+    /// Turn audit findings that belong to no criterion into criteria.
+    ///
+    /// This is the other half of the feedback loop [`record_observed_writes`]
+    /// starts. That one repairs a scope the plan got wrong; this one repairs a
+    /// plan that is missing an item outright — the case the panel reports as a
+    /// finding it cannot attribute to any criterion.
+    ///
+    /// An unattributed finding is not a nuisance to be tolerated. It is the
+    /// contract admitting it does not cover the objective: the work has no
+    /// criterion to be scheduled under, no write scope to be parallelised by,
+    /// and no checklist row to be audited against, so every round pays a full
+    /// audit-mark clear and re-verifies everything to chase a gap it cannot
+    /// name. Naming it is what closes the loop.
+    ///
+    /// Fail-open and capped. The amendment is a proposal;
+    /// [`crate::session::goal_replan::apply_amendment`] is what decides how
+    /// much of it the contract accepts.
+    pub(super) async fn amend_plan_for_unattributed_findings(
+        &self,
+        findings: &[crate::session::goal_tracker::ClassifierFinding],
+    ) {
+        use crate::session::goal_replan::{
+            ChannelAmenderSpawner, GOAL_AMENDER_MAX_RUNS, GoalAmenderInputs, GoalAmenderOutcome,
+            amend_plan_on_disk, run_goal_amender,
+        };
+        let unattributed: Vec<String> = findings
+            .iter()
+            .filter(|f| f.criterion.is_none())
+            .map(|f| f.message.clone())
+            .collect();
+        if unattributed.is_empty() {
+            return;
+        }
+        let Some(event_tx) = self.tool_context.subagent_event_tx.clone() else {
+            tracing::debug!("goal amender: no subagent coordinator channel; skipping");
+            return;
+        };
+
+        // Claim the run and read the inputs under ONE lock, then drop it before
+        // the spawn await: two concurrent rejections must not both see budget
+        // left and spawn two writers against the same plan.
+        let claimed = {
+            let mut tracker = self.goal_tracker.lock();
+            if !tracker.claim_amender_run(GOAL_AMENDER_MAX_RUNS) {
+                None
+            } else {
+                let plan_file = tracker.plan_path();
+                tracker
+                    .snapshot()
+                    .map(|o| (o.objective.clone(), plan_file, o.verifier_id.clone()))
+            }
+        };
+        let Some((objective, plan_file, verifier_id)) = claimed else {
+            tracing::debug!("goal amender: no run claimed (budget spent or no goal); skipping");
+            return;
+        };
+        if !plan_file.exists() {
+            return;
+        }
+
+        let parent_prompt_id = self
+            .current_prompt_id
+            .lock()
+            .expect("current_prompt_id mutex poisoned")
+            .clone();
+        let task_tool_name = self.resolve_goal_tool_names().await.task;
+        let tool_names = self.resolve_inherit_role_tool_names().await;
+        let amendment_file = crate::session::goal_tracker::amendment_proposal_file(&verifier_id);
+        let spawner = ChannelAmenderSpawner {
+            event_tx,
+            parent_session_id: self.session_id_string(),
+            parent_prompt_id,
+            cwd: Some(self.tool_context.cwd.as_str().to_owned()),
+            trace_sink: Some((self.chat_state_handle.clone(), task_tool_name)),
+        };
+
+        let started = std::time::Instant::now();
+        let outcome = run_goal_amender(
+            &spawner,
+            GoalAmenderInputs {
+                objective: &objective,
+                plan_file: &plan_file,
+                amendment_file: &amendment_file,
+                unattributed: &unattributed,
+                tool_names: &tool_names,
+            },
+        )
+        .await;
+        // Seal the amender's synthetic `task` pair into its own harness trace
+        // turn, as every other goal role does.
+        self.chat_state_handle.flush_harness_trace_turn();
+
+        let proposed = match &outcome {
+            GoalAmenderOutcome::Proposed(a) => a.appended.len(),
+            _ => 0,
+        };
+        self.events
+            .emit(crate::session::events::Event::GoalPlanAmenderRan {
+                unattributed: unattributed.len(),
+                proposed,
+                failed_open: matches!(outcome, GoalAmenderOutcome::FailedOpen),
+                latency_ms: started.elapsed().as_millis() as u64,
+            });
+
+        let GoalAmenderOutcome::Proposed(amendment) = outcome else {
+            return;
+        };
+        match amend_plan_on_disk(&plan_file, &amendment) {
+            Ok(report) => {
+                let landed = report.changed();
+                self.emit_plan_amended(&report);
+                // The new rows must reach the criteria view, or the next wave
+                // schedules from a plan the scheduler has not read.
+                if landed {
+                    self.goal_tracker.lock().refresh_criteria_view();
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "goal amender: could not amend the plan"),
+        }
+    }
+
+    /// Report an applied amendment, including what it refused. No-op when
+    /// nothing reached the file — a fully-rejected amendment leaves the plan
+    /// byte-identical, and the rejections are carried by the runs that did
+    /// change something.
+    fn emit_plan_amended(&self, report: &crate::session::goal_replan::AmendmentReport) {
+        if !report.changed() {
+            return;
+        }
+        self.events
+            .emit(crate::session::events::Event::GoalPlanAmended {
+                appended: report.appended.clone(),
+                scopes_widened: report.scopes.iter().map(|(n, _)| *n).collect(),
+                edges_added: report.edges.len(),
+                rejected: report
+                    .rejected
+                    .iter()
+                    .map(crate::session::goal_replan::Rejection::as_const_str)
+                    .collect(),
+            });
     }
 }
 

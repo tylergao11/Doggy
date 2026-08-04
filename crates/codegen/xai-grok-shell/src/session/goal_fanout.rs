@@ -157,7 +157,12 @@ pub(crate) struct WorkerOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MergeOutcome {
     /// Every changed file landed; the criterion may be marked Exec-complete.
-    Landed { criterion: u32, files: usize },
+    ///
+    /// The paths, not just how many: they are the only record of what this
+    /// criterion actually writes, which is what lets a collision be recorded in
+    /// the plan instead of repeating next round — see
+    /// [`crate::session::goal_replan`].
+    Landed { criterion: u32, files: Vec<String> },
     /// Some files could not be merged. The criterion stays open and the
     /// conflicting paths are reported so the next round knows where to look.
     Conflicted {
@@ -183,6 +188,32 @@ impl MergeOutcome {
     pub(crate) fn landed(&self) -> bool {
         matches!(self, Self::Landed { .. })
     }
+
+    /// Paths this criterion's worker is known to have written.
+    ///
+    /// For a clean landing that is what reached the repo; for a conflict it is
+    /// the paths the merge refused, which are exactly the ones another
+    /// criterion had already claimed. A skipped criterion produced no evidence.
+    pub(crate) fn written_paths(&self) -> &[String] {
+        match self {
+            Self::Landed { files, .. } => files,
+            Self::Conflicted { conflicts, .. } => conflicts,
+            Self::Skipped { .. } => &[],
+        }
+    }
+}
+
+/// What each criterion in a wave was observed to write, for the plan amendment.
+///
+/// Criteria that wrote nothing are left out entirely: an amendment built from
+/// them would be empty, and reporting them as "wrote no files" invites the
+/// reading that their scope should shrink.
+pub(crate) fn observed_writes(merges: &[MergeOutcome]) -> Vec<(u32, Vec<String>)> {
+    merges
+        .iter()
+        .filter(|m| !m.written_paths().is_empty())
+        .map(|m| (m.criterion(), m.written_paths().to_vec()))
+        .collect()
 }
 
 /// The prompt for one criterion worker.
@@ -250,7 +281,7 @@ pub(crate) async fn merge_worker(session_id: &str, outcome: &WorkerOutcome) -> M
     match xai_grok_workspace::worktree::apply_worktree(&req).await {
         Ok(ApplyWorktreeResponse::Success { files, .. }) => MergeOutcome::Landed {
             criterion,
-            files: files.len(),
+            files: files.into_iter().map(|f| f.path).collect(),
         },
         Ok(ApplyWorktreeResponse::Conflicts { conflicts, .. }) => MergeOutcome::Conflicted {
             criterion,
@@ -299,7 +330,8 @@ pub(crate) fn render_wave_report(workers: &[WorkerOutcome], merges: &[MergeOutco
         match m {
             MergeOutcome::Landed { files, .. } => {
                 out.push_str(&format!(
-                    "- criterion {n}: merged ({files} file(s)). {summary}\n"
+                    "- criterion {n}: merged ({} file(s)). {summary}\n",
+                    files.len(),
                 ));
             }
             MergeOutcome::Conflicted { conflicts, .. } => {
@@ -620,7 +652,7 @@ mod tests {
         assert!(
             MergeOutcome::Landed {
                 criterion: 1,
-                files: 2
+                files: vec!["src/a.rs".into(), "src/b.rs".into()]
             }
             .landed()
         );
@@ -638,6 +670,34 @@ mod tests {
                 why: "worker failed".into()
             }
             .landed()
+        );
+    }
+
+    #[test]
+    fn a_wave_reports_what_each_criterion_wrote_including_the_conflicts() {
+        // The conflicting paths matter as much as the landed ones: they are the
+        // half of the collision the plan did not know about.
+        let merges = vec![
+            MergeOutcome::Landed {
+                criterion: 1,
+                files: vec!["src/shared.rs".into()],
+            },
+            MergeOutcome::Conflicted {
+                criterion: 2,
+                conflicts: vec!["src/shared.rs".into()],
+            },
+            MergeOutcome::Skipped {
+                criterion: 3,
+                why: "worker failed".into(),
+            },
+        ];
+        assert_eq!(
+            observed_writes(&merges),
+            vec![
+                (1, vec!["src/shared.rs".to_string()]),
+                (2, vec!["src/shared.rs".to_string()]),
+            ],
+            "a criterion that produced no evidence contributes none"
         );
     }
 
@@ -690,7 +750,7 @@ mod tests {
         let merges = vec![
             MergeOutcome::Landed {
                 criterion: 1,
-                files: 3,
+                files: vec!["src/p.rs".into(), "src/q.rs".into(), "src/r.rs".into()],
             },
             MergeOutcome::Conflicted {
                 criterion: 2,
@@ -732,7 +792,7 @@ mod tests {
         }];
         let merges = vec![MergeOutcome::Landed {
             criterion: 1,
-            files: 1,
+            files: vec!["src/a.rs".into()],
         }];
         let report = render_wave_report(&workers, &merges);
         assert!(report.contains('…'), "{report}");
@@ -964,6 +1024,12 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(repo.join("a.rs")).unwrap(), "a1\n");
         assert_eq!(std::fs::read_to_string(repo.join("b.rs")).unwrap(), "b1\n");
+        assert_eq!(
+            observed_writes(&merges),
+            vec![(1, vec!["a.rs".to_string()]), (2, vec!["b.rs".to_string()])],
+            "the merge reports the real paths, which is what a plan amendment \
+             is built from: {merges:?}"
+        );
     }
 
     #[tokio::test]
@@ -1012,6 +1078,25 @@ mod tests {
             "{report}"
         );
         assert!(report.contains("Criterion(s) 2 did not land"), "{report}");
+
+        // The collision is now evidence, and the evidence is enough to stop it
+        // happening again: recording it in the plan orders the pair.
+        let plan = "## Acceptance criteria\n1. one\n2. two\n\n\
+                    ## Acceptance checklist\n| Exec | Audit | Criterion |\n|---|---|---|\n\
+                    | [ ] | [ ] | one |\n| [ ] | [ ] | two |\n\n\
+                    ## Criterion dependencies\n| # | Depends on | Write scope |\n|---|---|---|\n\
+                    | 1 | - | one.rs |\n| 2 | - | two.rs |\n";
+        let amendment =
+            crate::session::goal_replan::amendment_from_observed_writes(&observed_writes(&merges));
+        let (amended, amendment_report) =
+            crate::session::goal_replan::apply_amendment(plan, &amendment);
+        assert!(amendment_report.changed(), "{amendment_report:?}");
+        assert_eq!(
+            crate::session::goal_criterion_graph::load_criterion_graph(&amended, 2)
+                .parallel_waves(),
+            Some(vec![vec![1], vec![2]]),
+            "after the collision is recorded the two criteria cannot share a wave:\n{amended}"
+        );
     }
 
     #[tokio::test]
