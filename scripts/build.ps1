@@ -13,6 +13,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# $PSScriptRoot, not the cwd: this is dot-sourced before Set-Location below.
+. (Join-Path $PSScriptRoot "cargo.ps1")
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
@@ -24,11 +26,11 @@ if (Test-Path $protoc) {
 $pkg = "xai-grok-pager-bin"
 if ($Debug) {
     Write-Host "[doggy] cargo build -p $pkg (debug) ..."
-    cargo build -p $pkg
+    Invoke-CargoOrThrow build -p $pkg
     $exe = Join-Path $Root "target\debug\xai-grok-pager.exe"
 } else {
     Write-Host "[doggy] cargo build -p $pkg --release ..."
-    cargo build -p $pkg --release
+    Invoke-CargoOrThrow build -p $pkg --release
     $exe = Join-Path $Root "target\release\xai-grok-pager.exe"
 }
 

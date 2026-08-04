@@ -415,6 +415,67 @@ async fn finish_git_capture(raw: String, workspace_root: &Path) -> CapturedChang
     }
 }
 
+/// Wall-clock limit for the per-round changed-file probe.
+///
+/// Far tighter than [`DIFF_COMMAND_TIMEOUT`] because this runs after *every*
+/// model round rather than once per verification: a name-only diff that has
+/// not answered in ten seconds is not worth waiting for, and the caller
+/// degrades cleanly when it cannot tell.
+const CHANGED_NAMES_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Workspace paths touched since the goal baseline — names only.
+///
+/// The round loop needs to know *whether the workspace moved*, which is the
+/// question [`capture_changes_diff`] answers on its way to producing a patch
+/// nobody reads here. Building, capping and discarding that patch after every
+/// round would spend megabytes to learn one bit, so this takes the same
+/// baseline and asks git for the names alone.
+///
+/// `None` means **could not tell** — no recorded baseline, or git failed — and
+/// callers must treat it as neither progress nor a stall. Returning an empty
+/// list on failure would let a broken git report "you changed nothing" and cut
+/// off a run that is working fine. The expensive fallback layers
+/// (lazy baseline, walkdir) are deliberately not reproduced: they exist so a
+/// verification verdict is never lost, and a progress hint can afford to
+/// abstain.
+pub(crate) async fn changed_file_names(
+    baseline_commit: Option<&str>,
+    workspace_root: &Path,
+) -> Option<Vec<String>> {
+    let baseline = baseline_commit?;
+    let mut cmd = git_command(workspace_root);
+    cmd.arg("diff").arg("--name-only").arg("-z").arg(baseline);
+    let output = match tokio::time::timeout(CHANGED_NAMES_TIMEOUT, cmd.output()).await {
+        Ok(Ok(o)) if o.status.success() => o,
+        Ok(Ok(o)) => {
+            tracing::debug!(
+                exit = ?o.status.code(),
+                "goal classifier: name-only diff non-zero exit; progress signal unavailable",
+            );
+            return None;
+        }
+        Ok(Err(err)) => {
+            tracing::debug!(error = %err, "goal classifier: name-only diff spawn failed");
+            return None;
+        }
+        Err(_) => {
+            tracing::debug!("goal classifier: name-only diff timed out");
+            return None;
+        }
+    };
+    let mut files: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .collect();
+    // `git diff` cannot see a file that was never added, and creating one is
+    // the most common first thing a round does.
+    files.extend(git_untracked_files(workspace_root).await);
+    files.sort();
+    files.dedup();
+    Some(files)
+}
+
 /// Untracked, non-ignored paths via `git ls-files --others
 /// --exclude-standard -z`. NUL-separated output so non-ASCII / special
 /// filenames arrive verbatim instead of octal-escaped-and-quoted.

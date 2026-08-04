@@ -6,6 +6,8 @@
 #   .\scripts\dev.ps1 -- --help
 
 $ErrorActionPreference = "Stop"
+# $PSScriptRoot, not the cwd: this is dot-sourced before Set-Location below.
+. (Join-Path $PSScriptRoot "cargo.ps1")
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
@@ -15,4 +17,7 @@ if (Test-Path $protoc) {
 }
 
 Write-Host "[doggy] cargo run -p xai-grok-pager-bin (incremental) ..."
-cargo run -p xai-grok-pager-bin -- @args
+# Propagated rather than thrown: this is a launcher, so the exit code that
+# matters is the TUI's own, and a compile failure already surfaces as non-zero.
+Invoke-Cargo run -p xai-grok-pager-bin -- @args
+exit $LASTEXITCODE

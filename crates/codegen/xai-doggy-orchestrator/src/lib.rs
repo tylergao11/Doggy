@@ -34,7 +34,7 @@ pub use decide::{
 pub use inject::Injection;
 pub use open_items::{OpenItem, OpenItemsSnapshot};
 pub use progress::{
-    RoundActivity, STALL_CUTOFF_AFTER, STALL_REAPPROACH_AFTER, StallLevel, StallTracker,
-    round_fingerprint,
+    IDLE_CUTOFF_AFTER, RoundActivity, RoundDelta, RoundLedger, STALL_CUTOFF_AFTER,
+    STALL_REAPPROACH_AFTER, StallLevel, StallReason, round_fingerprint,
 };
 pub use state::{PauseReason, TaskPhase, TaskStatus};

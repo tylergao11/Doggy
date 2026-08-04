@@ -797,7 +797,7 @@ impl SessionActor {
             // …and its termination measure. The completion rules decide only
             // whether the task is done; on their own they will ask for another
             // round forever, and this loop has no reason of its own to stop.
-            let mut doggy_stall = xai_doggy_orchestrator::StallTracker::new();
+            let mut doggy_ledger = xai_doggy_orchestrator::RoundLedger::new();
             let mut doggy_rounds: u32 = 0;
             if self.doggy_task_bound() {
                 doggy_machine.start();
@@ -838,7 +838,7 @@ impl SessionActor {
                     _ => Vec::new(),
                 };
                 match self
-                    .run_doggy_round_end(&mut doggy_machine, &mut doggy_stall, &round_tools)
+                    .run_doggy_round_end(&mut doggy_machine, &mut doggy_ledger, &round_tools)
                     .await
                 {
                     DoggyRoundAction::Continue => {

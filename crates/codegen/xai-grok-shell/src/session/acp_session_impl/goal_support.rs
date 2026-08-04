@@ -1445,12 +1445,24 @@ impl SessionActor {
         {
             return;
         }
+        let active = self.goal_tracker.lock().status()
+            == Some(crate::session::goal_tracker::GoalStatus::Active);
+        // A goal restored as Active means the session was left in the Goal
+        // posture. `goal_posture` is in-memory only, so without this the
+        // session comes back as Auto and the completion gate — which requires
+        // the posture, so that an Auto prompt cannot inherit the goal loop —
+        // would quietly stop driving a run the user expects to continue.
+        if active && self.goal_harness_enabled() {
+            self.goal_posture
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.enqueue_current_mode_update(acp::SessionModeId::new(
+                xai_grok_tools::types::SessionMode::Goal.as_id(),
+            ));
+        }
         if self.goal_harness_enabled() {
             return;
         }
-        if self.goal_tracker.lock().status()
-            != Some(crate::session::goal_tracker::GoalStatus::Active)
-        {
+        if !active {
             return;
         }
         let _ = self

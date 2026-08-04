@@ -2150,6 +2150,15 @@ impl SessionActor {
         self.goal_blocked_streak
             .store(0, std::sync::atomic::Ordering::Relaxed);
 
+        // Re-arm the Goal posture. The completion gate requires it (see
+        // `doggy_task_bound`), so resuming from Auto without this would leave
+        // the goal Active and undriven — resumed but going nowhere.
+        self.goal_posture
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.enqueue_current_mode_update(acp::SessionModeId::new(
+            xai_grok_tools::types::SessionMode::Goal.as_id(),
+        ));
+
         // Retry-on-resume: re-fire the planner when a just-resumed goal
         // still has no plan, so "resume to retry" holds. On re-failure
         // the goal re-pauses with the canonical message.

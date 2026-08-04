@@ -10,7 +10,7 @@
 use super::audit::AuditFinding;
 use super::inject::Injection;
 use super::open_items::OpenItemsSnapshot;
-use super::progress::StallLevel;
+use super::progress::{RoundDelta, StallLevel};
 use super::state::{PauseReason, TaskPhase, TaskStatus};
 
 /// Decision after a model round finishes.
@@ -51,6 +51,9 @@ pub struct RoundEndView {
     /// rules below can ask for another round forever. This is the termination
     /// measure that stops them — see [`super::progress`].
     pub stall: StallLevel,
+    /// What the round that just ended actually moved. Carried into every
+    /// injection so the model's input is never a repeat of the last round's.
+    pub delta: RoundDelta,
 }
 
 /// Mutable machine surface the host keeps on the session.
@@ -130,11 +133,16 @@ pub fn decide_after_round(view: &RoundEndView) -> TaskDecision {
     };
     match view.stall {
         StallLevel::Progressing => TaskDecision::RunAnotherRound { injection },
-        StallLevel::Reapproach { repeats } => TaskDecision::RunAnotherRound {
-            injection: Injection::reapproach(repeats, view.open_items.summary_line()),
+        StallLevel::Reapproach { repeats, reason } => TaskDecision::RunAnotherRound {
+            injection: Injection::reapproach(
+                repeats,
+                reason,
+                view.open_items.summary_line(),
+                view.delta.clone(),
+            ),
         },
-        StallLevel::CutOff { repeats } => TaskDecision::TaskPaused {
-            reason: PauseReason::NoProgress { repeats },
+        StallLevel::CutOff { repeats, reason } => TaskDecision::TaskPaused {
+            reason: PauseReason::NoProgress { repeats, reason },
         },
     }
 }
@@ -159,7 +167,10 @@ fn decide_completion(view: &RoundEndView) -> TaskDecision {
 
     if view.open_items.has_explicit_work() {
         return TaskDecision::RunAnotherRound {
-            injection: Injection::continue_with_summary(view.open_items.summary_line()),
+            injection: Injection::continue_with(
+                view.open_items.summary_line(),
+                view.delta.clone(),
+            ),
         };
     }
 
@@ -169,10 +180,10 @@ fn decide_completion(view: &RoundEndView) -> TaskDecision {
             injection: Injection::fix_with(findings.clone()),
         },
         VerificationOutcome::Pending => TaskDecision::RunAnotherRound {
-            injection: Injection::continue_with_summary(
-                "acceptance pending — when the objective is met, call \
-                 update_goal(completed: true) so verification can accept the task"
-                    .to_string(),
+            injection: Injection::continue_with(
+                "acceptance pending — when every acceptance criterion is met, call \
+                 update_goal(completed: true) so verification can accept the task",
+                view.delta.clone(),
             ),
         },
     }
@@ -182,6 +193,7 @@ fn decide_completion(view: &RoundEndView) -> TaskDecision {
 mod tests {
     use super::*;
     use crate::open_items::OpenItem;
+    use crate::progress::StallReason;
 
     fn open_with_items(summaries: &[&str]) -> OpenItemsSnapshot {
         OpenItemsSnapshot {
@@ -207,6 +219,7 @@ mod tests {
             budget_hit: false,
             verification,
             stall: StallLevel::Progressing,
+            delta: RoundDelta::default(),
         }
     }
 
@@ -218,10 +231,34 @@ mod tests {
         ));
         match d {
             TaskDecision::RunAnotherRound {
-                injection: Injection::Continue { open_summary },
+                injection: Injection::Continue { open_summary, .. },
             } => {
                 assert!(open_summary.contains("wire orchestrator"));
             }
+            other => panic!("expected Continue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_continue_carries_the_round_delta() {
+        // The fixed point that produced the observed loop: the host prunes the
+        // previous directive, so an injection without a delta is byte-identical
+        // every round and the model answers it identically.
+        let view = RoundEndView {
+            delta: RoundDelta {
+                round: 4,
+                tools_called: vec!["read_file".into()],
+                ..RoundDelta::default()
+            },
+            ..round(
+                OpenItemsSnapshot::acceptance_only(),
+                VerificationOutcome::Pending,
+            )
+        };
+        match decide_after_round(&view) {
+            TaskDecision::RunAnotherRound {
+                injection: Injection::Continue { delta, .. },
+            } => assert_eq!(delta.round, 4),
             other => panic!("expected Continue, got {other:?}"),
         }
     }
@@ -300,26 +337,63 @@ mod tests {
                 VerificationOutcome::Pending,
             )
         };
-        match decide_after_round(&stalled(StallLevel::Reapproach { repeats: 3 })) {
+        match decide_after_round(&stalled(StallLevel::Reapproach {
+            repeats: 3,
+            reason: StallReason::Repeated,
+        })) {
             TaskDecision::RunAnotherRound {
-                injection: Injection::Reapproach { repeats, .. },
-            } => assert_eq!(repeats, 3),
+                injection: Injection::Reapproach { repeats, reason, .. },
+            } => {
+                assert_eq!(repeats, 3);
+                assert_eq!(reason, StallReason::Repeated);
+            }
             other => panic!("expected Reapproach, got {other:?}"),
         }
         assert_eq!(
-            decide_after_round(&stalled(StallLevel::CutOff { repeats: 6 })),
+            decide_after_round(&stalled(StallLevel::CutOff {
+                repeats: 6,
+                reason: StallReason::Repeated,
+            })),
             TaskDecision::TaskPaused {
-                reason: PauseReason::NoProgress { repeats: 6 }
+                reason: PauseReason::NoProgress {
+                    repeats: 6,
+                    reason: StallReason::Repeated
+                }
             },
         );
     }
 
     #[test]
-    fn open_todos_alone_can_stall_the_run_forever_without_the_measure() {
-        // Explicit items short-circuit before verification is even read, so a
-        // todo list the model never closes is the second unbounded path.
+    fn a_tool_less_round_is_re_approached_not_continued() {
+        // Narration answered with the same "continue implementing" is the
+        // fixed point; it has to get a different message on the first offence.
         let view = RoundEndView {
-            stall: StallLevel::CutOff { repeats: 6 },
+            stall: StallLevel::Reapproach {
+                repeats: 1,
+                reason: StallReason::Idle,
+            },
+            ..round(
+                open_with_items(&["delete the old folder"]),
+                VerificationOutcome::Pending,
+            )
+        };
+        match decide_after_round(&view) {
+            TaskDecision::RunAnotherRound {
+                injection: Injection::Reapproach { reason, .. },
+            } => assert_eq!(reason, StallReason::Idle),
+            other => panic!("expected Reapproach, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn open_todos_alone_can_stall_the_run_forever_without_the_measure() {
+        // Explicit items short-circuit before verification is even read, so an
+        // open-item list the model never closes is the second unbounded path.
+        let view = RoundEndView {
+            stall: StallLevel::CutOff {
+                repeats: 6,
+                reason: StallReason::Repeated,
+            },
             ..round(
                 open_with_items(&["port the loader"]),
                 VerificationOutcome::Achieved,
@@ -328,7 +402,10 @@ mod tests {
         assert_eq!(
             decide_after_round(&view),
             TaskDecision::TaskPaused {
-                reason: PauseReason::NoProgress { repeats: 6 }
+                reason: PauseReason::NoProgress {
+                    repeats: 6,
+                    reason: StallReason::Repeated
+                }
             },
         );
     }
@@ -340,37 +417,79 @@ mod tests {
     /// measure this ran until the user cancelled it.
     #[test]
     fn the_round_loop_terminates_against_a_model_that_never_completes() {
-        use crate::progress::{RoundActivity, StallTracker, round_fingerprint};
+        use crate::progress::{IDLE_CUTOFF_AFTER, RoundActivity, RoundLedger};
 
-        let mut stall = StallTracker::new();
+        let mut ledger = RoundLedger::new();
         let open = OpenItemsSnapshot::acceptance_only();
         let verification = VerificationOutcome::Pending;
         // The observed failure: narration only, so not even a tool name moves.
         let activity = RoundActivity::default();
 
-        let mut injections = 0;
-        for round in 1..=1_000 {
-            let level = stall.observe(round_fingerprint(&open, &verification, &activity));
+        let mut injections: Vec<&'static str> = Vec::new();
+        for round in 1..=1_000u32 {
+            let (stall, delta) = ledger.observe(&open, &verification, &activity);
             let decision = decide_after_round(&RoundEndView {
                 round_ok: true,
                 open_items: open.clone(),
                 user_cancel: false,
                 budget_hit: false,
                 verification: verification.clone(),
-                stall: level,
+                stall,
+                delta,
             });
             match decision {
-                TaskDecision::RunAnotherRound { .. } => injections += 1,
+                TaskDecision::RunAnotherRound { injection } => injections.push(injection.kind()),
                 TaskDecision::TaskPaused {
-                    reason: PauseReason::NoProgress { repeats },
+                    reason: PauseReason::NoProgress { repeats, reason },
                 } => {
-                    assert_eq!(round, crate::progress::STALL_CUTOFF_AFTER);
-                    assert_eq!(repeats, crate::progress::STALL_CUTOFF_AFTER);
+                    assert_eq!(round, IDLE_CUTOFF_AFTER);
+                    assert_eq!(repeats, IDLE_CUTOFF_AFTER);
+                    assert_eq!(reason, StallReason::Idle);
                     assert_eq!(
                         injections,
-                        crate::progress::STALL_CUTOFF_AFTER - 1,
-                        "every round before the cut-off gets one injection",
+                        vec!["reapproach"; (IDLE_CUTOFF_AFTER - 1) as usize],
+                        "a tool-less round never gets the plain continue that \
+                         produced the fixed point",
                     );
+                    return;
+                }
+                other => panic!("unexpected decision {other:?}"),
+            }
+        }
+        panic!("the completion gate never stopped asking for another round");
+    }
+
+    /// Same shape, but the model does call tools — it just never converges.
+    /// The repeat measure has to stop it where the idle measure cannot.
+    #[test]
+    fn the_round_loop_terminates_against_a_model_that_works_but_never_converges() {
+        use crate::progress::{RoundActivity, RoundLedger, STALL_CUTOFF_AFTER};
+
+        let mut ledger = RoundLedger::new();
+        let open = OpenItemsSnapshot::acceptance_only();
+        let verification = VerificationOutcome::Pending;
+        let activity = RoundActivity {
+            tools_called: vec!["grep".into(), "read_file".into()],
+            ..RoundActivity::default()
+        };
+
+        for round in 1..=1_000u32 {
+            let (stall, delta) = ledger.observe(&open, &verification, &activity);
+            match decide_after_round(&RoundEndView {
+                round_ok: true,
+                open_items: open.clone(),
+                user_cancel: false,
+                budget_hit: false,
+                verification: verification.clone(),
+                stall,
+                delta,
+            }) {
+                TaskDecision::RunAnotherRound { .. } => {}
+                TaskDecision::TaskPaused {
+                    reason: PauseReason::NoProgress { reason, .. },
+                } => {
+                    assert_eq!(round, STALL_CUTOFF_AFTER);
+                    assert_eq!(reason, StallReason::Repeated);
                     return;
                 }
                 other => panic!("unexpected decision {other:?}"),
@@ -383,8 +502,12 @@ mod tests {
     fn a_stall_never_overrides_a_terminal_outcome() {
         // Done and Pause are conclusions about the work; the stall measure only
         // limits how many times the gate may ask for more of it.
+        let hard_stall = StallLevel::CutOff {
+            repeats: 99,
+            reason: StallReason::Repeated,
+        };
         let done = RoundEndView {
-            stall: StallLevel::CutOff { repeats: 99 },
+            stall: hard_stall,
             ..round(
                 OpenItemsSnapshot::acceptance_only(),
                 VerificationOutcome::Achieved,
@@ -394,7 +517,7 @@ mod tests {
 
         let cancelled = RoundEndView {
             user_cancel: true,
-            stall: StallLevel::CutOff { repeats: 99 },
+            stall: hard_stall,
             ..round(
                 OpenItemsSnapshot::acceptance_only(),
                 VerificationOutcome::Pending,
@@ -417,6 +540,7 @@ mod tests {
             budget_hit: false,
             verification: VerificationOutcome::Pending,
             stall: StallLevel::Progressing,
+            delta: RoundDelta::default(),
         });
         assert_eq!(
             d,
@@ -435,6 +559,7 @@ mod tests {
             budget_hit: true,
             verification: VerificationOutcome::Achieved,
             stall: StallLevel::Progressing,
+            delta: RoundDelta::default(),
         });
         assert_eq!(
             d,
@@ -453,6 +578,7 @@ mod tests {
             budget_hit: false,
             verification: VerificationOutcome::Achieved,
             stall: StallLevel::Progressing,
+            delta: RoundDelta::default(),
         });
         assert_eq!(
             d,
@@ -469,7 +595,7 @@ mod tests {
         assert_eq!(m.status, TaskStatus::Active);
 
         m.apply(&TaskDecision::RunAnotherRound {
-            injection: Injection::continue_with_summary("work"),
+            injection: Injection::continue_with("work", RoundDelta::default()),
         });
         assert_ne!(m.status, TaskStatus::Done);
 
