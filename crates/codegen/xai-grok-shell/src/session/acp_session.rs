@@ -92,11 +92,11 @@ mod compaction_segments;
 mod types;
 pub(crate) use types::*;
 pub use types::{TodoGateDecision, TodoGateReason};
-#[path = "acp_session_impl/goal.rs"]
-mod goal;
 /// Doggy completion gate (TaskOrchestrator host adapter).
 #[path = "acp_session_impl/doggy_gate.rs"]
 mod doggy_gate;
+#[path = "acp_session_impl/goal.rs"]
+mod goal;
 pub(crate) use doggy_gate::DoggyRoundAction;
 #[path = "acp_session_impl/interjection.rs"]
 mod interjection;

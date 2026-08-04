@@ -314,9 +314,8 @@ impl SessionActor {
                         .join("");
                     let objective = objective.trim();
                     if !objective.is_empty() {
-                        let text_block = |text: String| {
-                            acp::ContentBlock::Text(acp::TextContent::new(text))
-                        };
+                        let text_block =
+                            |text: String| acp::ContentBlock::Text(acp::TextContent::new(text));
                         let reminder = self.setup_goal(objective, None).await;
                         let mut out = vec![text_block(reminder)];
                         out.extend(blocks);

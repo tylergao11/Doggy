@@ -1407,94 +1407,6 @@ fn dashboard_toggle_auto_approve_blocked_by_policy_pin() {
     );
 }
 
-/// Shift+Tab in the peek cycles the PEEKED agent's live mode
-/// (Normal → Plan) and leaves the dashboard foregrounded — the same
-/// effect as Shift+Tab inside that agent's chat view.
-#[serial_test::serial(GROK_AGENT_DASHBOARD)]
-#[test]
-fn dashboard_peek_cycle_mode_cycles_peeked_agent() {
-    let mut app = test_app_with_agent();
-    open_dashboard(&mut app);
-    let row = crate::views::dashboard::DashboardRowId::TopLevel(AgentId(0));
-    let fields = crate::views::dashboard::peek::compute_peek_fields(&row, &app.agents)
-        .expect("agent must be peekable");
-    if let Some(d) = app.dashboard.as_mut() {
-        d.focus_row(row.clone());
-        d.peek = Some(crate::views::dashboard::peek::PeekPanelState::new(
-            row.clone(),
-            fields,
-        ));
-    }
-    // Agent starts in Normal (no plan, no yolo).
-    assert_eq!(app.agents.get(&AgentId(0)).unwrap().plan_mode_pending, None);
-    assert!(!app.agents.get(&AgentId(0)).unwrap().session.yolo_mode);
-
-    let _ = dispatch(Action::DashboardPeekCycleMode, &mut app);
-
-    // Normal → Plan: the PEEKED agent enters plan mode.
-    assert_eq!(
-        app.agents.get(&AgentId(0)).unwrap().plan_mode_pending,
-        Some(true),
-        "peek cycle must put the peeked agent into plan mode",
-    );
-    // The dashboard stays foregrounded (active_view restored).
-    assert!(
-        matches!(app.active_view, ActiveView::AgentDashboard),
-        "peek cycle must not switch away from the dashboard, got {:?}",
-        app.active_view,
-    );
-}
-
-/// A dashboard-peek Shift+Tab cycles the peeked agent into plan mode but must
-/// NOT attribute a plan-nudge acceptance: the user is on the dashboard, not
-/// that agent's prompt, so the nudge (still within TTL) is left intact. This
-/// pins that the peek routes through the telemetry-free cycle body.
-#[serial_test::serial(GROK_AGENT_DASHBOARD)]
-#[test]
-fn dashboard_peek_cycle_does_not_retire_the_nudge() {
-    let mut app = test_app_with_agent();
-    open_dashboard(&mut app);
-    let row = crate::views::dashboard::DashboardRowId::TopLevel(AgentId(0));
-    let fields = crate::views::dashboard::peek::compute_peek_fields(&row, &app.agents)
-        .expect("agent must be peekable");
-    if let Some(d) = app.dashboard.as_mut() {
-        d.focus_row(row.clone());
-        d.peek = Some(crate::views::dashboard::peek::PeekPanelState::new(
-            row.clone(),
-            fields,
-        ));
-    }
-    // The peeked agent has a plan nudge on screen (shown before the cycle).
-    let _ = app.agents.get_mut(&AgentId(0)).unwrap().ephemeral_tip.show(
-        crate::tips::plan_nudge::plan_nudge_tip(),
-        &mut std::collections::HashMap::new(),
-    );
-
-    let _ = dispatch(Action::DashboardPeekCycleMode, &mut app);
-
-    // The peeked agent still enters plan mode …
-    assert_eq!(
-        app.agents.get(&AgentId(0)).unwrap().plan_mode_pending,
-        Some(true),
-        "peek cycle must still put the peeked agent into plan mode",
-    );
-    // … but the nudge is untouched: the peek path skips the accept + clear.
-    assert_eq!(
-        app.agents
-            .get(&AgentId(0))
-            .unwrap()
-            .ephemeral_tip
-            .current_key(),
-        Some(crate::tips::plan_nudge::PLAN_NUDGE_KEY),
-        "the dashboard peek must not retire (or attribute) the nudge",
-    );
-}
-
-/// Leader-mode independence: opening the dashboard works even when NOT in
-/// leader mode. The dashboard renders local sessions regardless; leader
-/// mode only adds the roster poll. Every entry point funnels through
-/// `Action::OpenDashboard`, so this covers `/dashboard`, `Ctrl+\`,
-/// `grok dashboard`, and the startup hook.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
 fn dashboard_open_works_without_leader() {
@@ -1855,67 +1767,6 @@ fn dashboard_slash_compact_does_not_spawn() {
     );
 }
 
-/// Shift+Tab (`DashboardCycleMode`) rotates Normal → Plan →
-/// Always-Approve → Normal.
-#[serial_test::serial(GROK_AGENT_DASHBOARD)]
-#[test]
-fn dashboard_cycle_mode_rotates_through_modes() {
-    use crate::views::dashboard::DashboardDispatchMode;
-    let mut app = test_app();
-    open_dashboard(&mut app);
-    // Default (no yolo) starts Normal.
-    assert_eq!(
-        app.dashboard.as_ref().unwrap().pending_mode,
-        DashboardDispatchMode::Normal
-    );
-    let _ = dispatch(Action::DashboardCycleMode, &mut app);
-    assert_eq!(
-        app.dashboard.as_ref().unwrap().pending_mode,
-        DashboardDispatchMode::Plan
-    );
-    let _ = dispatch(Action::DashboardCycleMode, &mut app);
-    assert_eq!(
-        app.dashboard.as_ref().unwrap().pending_mode,
-        DashboardDispatchMode::AlwaysApprove
-    );
-    let _ = dispatch(Action::DashboardCycleMode, &mut app);
-    assert_eq!(
-        app.dashboard.as_ref().unwrap().pending_mode,
-        DashboardDispatchMode::Normal
-    );
-}
-
-/// Under the managed-policy pin the staged-mode cycle skips
-/// Always-Approve (Normal → Plan → Normal) and explains why.
-#[serial_test::serial(GROK_AGENT_DASHBOARD)]
-#[test]
-fn dashboard_cycle_mode_skips_always_approve_under_policy_pin() {
-    use crate::views::dashboard::DashboardDispatchMode;
-    let mut app = test_app();
-    open_dashboard(&mut app);
-    app.yolo_policy_block = Some(POLICY_WARNING);
-
-    let _ = dispatch(Action::DashboardCycleMode, &mut app);
-    assert_eq!(
-        app.dashboard.as_ref().unwrap().pending_mode,
-        DashboardDispatchMode::Plan
-    );
-    let _ = dispatch(Action::DashboardCycleMode, &mut app);
-    let d = app.dashboard.as_ref().unwrap();
-    assert_eq!(
-        d.pending_mode,
-        DashboardDispatchMode::Normal,
-        "Always-Approve must be skipped under the pin"
-    );
-    assert_eq!(
-        d.error_toast.as_deref(),
-        Some(format!("{} {POLICY_WARNING}", crate::glyphs::ballot_x()).as_str()),
-    );
-}
-
-/// Opening the dashboard re-seeds BOTH staged dispatch fields: a model
-/// staged in a previous session is cleared and the mode is reset from
-/// `app.default_yolo`, so a fresh open never inherits stale staging.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
 fn dashboard_open_reseeds_pending_model_and_mode() {
@@ -1930,7 +1781,7 @@ fn dashboard_open_reseeds_pending_model_and_mode() {
             effort: None,
             display: "Grok 4.5".to_string(),
         });
-        d.pending_mode = DashboardDispatchMode::Plan;
+        d.pending_mode = DashboardDispatchMode::Goal;
     }
     // Navigate away (open is an idempotent toggle while the dashboard
     // view is active), then re-open: this clears the model and resets
@@ -1944,8 +1795,8 @@ fn dashboard_open_reseeds_pending_model_and_mode() {
     );
     assert_eq!(
         d.pending_mode,
-        DashboardDispatchMode::Normal,
-        "re-open must reset the mode from default_yolo (off → Normal)",
+        DashboardDispatchMode::Auto,
+        "re-open must reset staged mode to Auto (Doggy default)",
     );
 }
 
@@ -3530,9 +3381,9 @@ fn dashboard_overlay_cycle_from_unopened_dashboard_configures_state() {
     assert!(
         matches!(
             d.pending_mode,
-            crate::views::dashboard::DashboardDispatchMode::AlwaysApprove
+            crate::views::dashboard::DashboardDispatchMode::Auto
         ),
-        "pending_mode must reflect default_yolo (configure_dashboard_state ran), got {:?}",
+        "pending_mode must be Doggy Auto after configure_dashboard_state, got {:?}",
         d.pending_mode,
     );
 }

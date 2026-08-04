@@ -1074,9 +1074,9 @@ mod tests {
         renderer.render(area, &mut buf);
 
         // Accent at column 0
-        assert_eq!(buf.cell((0, 0)).unwrap().symbol(), "┃");
-        assert_eq!(buf.cell((0, 1)).unwrap().symbol(), "┃");
-        assert_eq!(buf.cell((0, 2)).unwrap().symbol(), "┃");
+        assert_eq!(buf.cell((0, 0)).unwrap().symbol(), crate::glyphs::accent_bar());
+        assert_eq!(buf.cell((0, 1)).unwrap().symbol(), crate::glyphs::accent_bar());
+        assert_eq!(buf.cell((0, 2)).unwrap().symbol(), crate::glyphs::accent_bar());
 
         // Left padding at columns 1-2 (empty space)
         assert_eq!(buf.cell((1, 1)).unwrap().symbol(), " ");
@@ -1121,7 +1121,7 @@ mod tests {
             let cell = buf.cell((3, 0)).unwrap();
             assert_eq!(
                 cell.symbol(),
-                "◆",
+                crate::glyphs::diamond_filled(),
                 "pending tool must keep the Diamond bullet at tick {tick}"
             );
             match first_fg {
@@ -1152,7 +1152,10 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme).with_tick(7);
         renderer.render(area, &mut buf);
 
-        assert_eq!(buf.cell((3, 0)).unwrap().symbol(), "◆");
+        assert_eq!(
+            buf.cell((3, 0)).unwrap().symbol(),
+            crate::glyphs::diamond_filled()
+        );
     }
 
     /// Collect the symbols from a row range in the buffer into a String.

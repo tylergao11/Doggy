@@ -1364,7 +1364,7 @@ fn set_compact_mode_toast_format() {
     let toast = read_toast(&app);
     assert!(toast.contains("Compact mode"));
     assert!(toast.contains("on"));
-    assert!(toast.contains('\u{2713}'));
+    assert!(toast.contains(crate::glyphs::check_mark()));
     let _ = dispatch(Action::SetCompactMode(false), &mut app);
     let toast = read_toast(&app);
     assert!(toast.contains("Compact mode"));
@@ -1585,14 +1585,14 @@ fn set_multiline_mode_toast_format() {
         .as_ref()
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
-    assert_eq!(toast, "\u{2713} Multiline: on");
+    assert_eq!(toast, expected_toast("\u{2713} Multiline: on"));
     let _ = dispatch(Action::SetMultilineMode(false), &mut app);
     let toast = app.agents[&AgentId(0)]
         .toast
         .as_ref()
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
-    assert_eq!(toast, "\u{2713} Multiline: off");
+    assert_eq!(toast, expected_toast("\u{2713} Multiline: off"));
 }
 /// No active agent → no-op (no panic, no effect, no mutation).
 /// Differs from `set_simple_mode_no_op_when_no_active_agent`: SHARED
@@ -2595,21 +2595,15 @@ fn non_permission_rollback_preserves_session_auto_mode() {
         "non-permission rollback must not clobber the per-session auto flag"
     );
 }
-/// Rollback path: a `SettingPersistFailed` for `permission_mode`
-/// reverts `agent.session.yolo_mode` + `app.default_yolo` +
-/// `app.current_ui.permission_mode` via `set_yolo_mode_inner`.
-/// MUST NOT re-emit any effects (would loop on persistent disk
-/// failure).
 #[test]
 fn rollback_permission_mode_reverts_state_no_effect() {
     use crate::settings::SettingValue;
     let mut app = test_app_with_agent();
     let _ = dispatch(Action::SetYoloMode(true), &mut app);
     assert!(app.agents[&AgentId(0)].session.is_yolo());
-    assert_eq!(
-        app.current_ui.permission_mode.as_deref(),
-        Some("always-approve")
-    );
+    assert_eq!(app.current_ui.permission_mode.as_deref(), Some("auto"));
+
+    // Rolling back to legacy "ask" still lands on Doggy Auto (kind maps to yolo).
     let effects = dispatch(
         Action::TaskComplete(TaskResult::SettingPersistFailed {
             key: "permission_mode",
@@ -2623,22 +2617,25 @@ fn rollback_permission_mode_reverts_state_no_effect() {
         "rollback path MUST NOT emit any Effect (would loop on persistent failure)",
     );
     assert!(
-        !app.agents[&AgentId(0)].session.is_yolo(),
-        "session.yolo_mode must revert via apply_setting_rollback"
+        app.agents[&AgentId(0)].session.is_yolo(),
+        "Ask rollback kind normalizes to Auto/yolo"
     );
-    assert!(!app.default_yolo);
-    assert_eq!(app.current_ui.permission_mode.as_deref(), Some("ask"));
+    assert!(app.default_yolo);
+    assert_eq!(app.current_ui.permission_mode.as_deref(), Some("auto"));
     let toast = app.agents[&AgentId(0)]
         .toast
         .as_ref()
         .map(|(s, _)| s.clone())
         .expect("failure toast must be set");
     assert_eq!(
-        toast, "\u{2717} Could not save permission_mode: permission denied",
-        "rollback toast must follow the exact `✗ Could not save {{key}}: {{error}}` format \
-             — drift here would diverge from other rollback toasts",
+        toast,
+        crate::glyphs::legacy_glyph_fallback(
+            "\u{2717} Could not save permission_mode: permission denied"
+        )
+        .as_ref(),
     );
 }
+
 /// The reset-dispatch test asserts the typed Action lineage. The
 /// reset path dispatches `Action::SetPermissionMode(Ask)` (the
 /// registered default) rather than `Action::SetYoloMode(false)`.
@@ -2679,59 +2676,6 @@ fn action_for_reset_permission_mode_dispatches_set_permission_mode_for_each_cano
     }
     assert!(action_for_reset("permission_mode", &SettingValue::Enum("bogus")).is_none());
 }
-/// Slash-command-while-modal-open refresh.
-/// `dispatch_cycle_mode` is the entry point for both Shift+Tab
-/// and the `/plan` / `/cycle-mode` slash commands. When the
-/// settings modal is open and a cycle lands, the modal's
-/// `pager_snapshot.plan_mode_active` must refresh to reflect
-/// the new effective state — otherwise the indicator stays
-/// stale until the next setter dispatch. Mirror of
-/// `set_plan_mode_refreshes_open_modal_pager_snapshot`.
-#[test]
-fn dispatch_cycle_mode_refreshes_open_modal_snapshot() {
-    use crate::views::modal::ActiveModal;
-    let mut app = test_app_with_agent();
-    let _ = dispatch(Action::OpenSettings, &mut app);
-    let agent = app.agents.get(&AgentId(0)).unwrap();
-    let Some(ActiveModal::Settings { state }) = &agent.active_modal else {
-        panic!("expected Settings modal after OpenSettings dispatch")
-    };
-    assert!(
-        !state.pager_snapshot.plan_mode_active,
-        "snapshot at open should be false (agent default)",
-    );
-    let _ = dispatch(Action::CycleMode, &mut app);
-    let agent = app.agents.get(&AgentId(0)).unwrap();
-    let Some(ActiveModal::Settings { state }) = &agent.active_modal else {
-        panic!("Settings modal must remain open across CycleMode")
-    };
-    assert!(
-        state.pager_snapshot.plan_mode_active,
-        "snapshot must be refreshed to true after CycleMode (Normal → Plan) — \
-             without refresh_open_settings_modals the indicator would stay stale",
-    );
-    let cur_value =
-        crate::settings::current_value_for("plan_mode", &state.ui_snapshot, &state.pager_snapshot)
-            .expect("plan_mode must resolve");
-    assert_eq!(
-        cur_value,
-        crate::settings::SettingValue::Enum("on"),
-        "current_value_for must read the refreshed snapshot",
-    );
-}
-/// `dispatch(Action::SetTheme("grokday"), &mut app)` emits
-/// exactly one `Effect::PersistSetting`, mutates
-/// `app.current_ui.theme`, fires a toast, and toggles AUTO_MODE
-/// off (kind is concrete).
-///
-/// Note: we persist `grokday` (a non-truecolor theme) here
-/// because `Effect::PersistSetting`'s payload is `&'static str`
-/// from the registry's canonical table — the persisted CANONICAL
-/// is what we're asserting, NOT the live theme cache (which
-/// `clamp_to_terminal` might fold to GrokNight in non-truecolor
-/// test environments). Persist + canonical contract is the test
-/// invariant; the cache contract is exercised separately by the
-/// `*_applies_when_*` tests.
 #[test]
 fn set_theme_emits_persist_setting_with_correct_payload() {
     use crate::settings::SettingValue;
@@ -3049,7 +2993,10 @@ fn set_theme_toast_format_uses_display_name() {
             toast.contains("Grok Day"),
             "toast must use display name `Grok Day`, not canonical `grokday`, got: {toast:?}",
         );
-        assert!(toast.contains('\u{2713}'), "toast must contain the ✓ glyph");
+        assert!(
+            toast.contains(crate::glyphs::check_mark()),
+            "toast must contain the ✓ glyph"
+        );
     });
 }
 #[test]
@@ -3060,7 +3007,7 @@ fn set_auto_dark_theme_toast_format_uses_display_name() {
         let toast = read_toast(&app);
         assert!(toast.contains("Auto dark theme"));
         assert!(toast.contains("Grok Day"));
-        assert!(toast.contains('\u{2713}'));
+        assert!(toast.contains(crate::glyphs::check_mark()));
     });
 }
 #[test]
@@ -3199,45 +3146,6 @@ fn rollback_auto_light_theme_with_auto_value_clears_to_none() {
         );
         assert_eq!(app.current_ui.auto_light_theme, None);
     });
-}
-/// Setter refreshes the open settings modal
-/// snapshot so the indicator reflects the new value before the
-/// shell's CurrentModeUpdate round-trip. Mirrors
-/// `set_multiline_mode_refreshes_open_modal_pager_snapshot`.
-#[test]
-fn set_plan_mode_refreshes_open_modal_pager_snapshot() {
-    use crate::views::modal::ActiveModal;
-    let mut app = test_app_with_agent();
-    let _ = dispatch(Action::OpenSettings, &mut app);
-    let agent = app.agents.get(&AgentId(0)).unwrap();
-    let Some(ActiveModal::Settings { state }) = &agent.active_modal else {
-        panic!("expected Settings modal after OpenSettings dispatch")
-    };
-    assert!(
-        !state.pager_snapshot.plan_mode_active,
-        "snapshot at open should be false (agent default)",
-    );
-    let _ = dispatch(
-        Action::SetPlanMode(crate::app::actions::PlanModeKind::On),
-        &mut app,
-    );
-    let agent = app.agents.get(&AgentId(0)).unwrap();
-    let Some(ActiveModal::Settings { state }) = &agent.active_modal else {
-        panic!("Settings modal must remain open across the dispatch")
-    };
-    assert!(
-        state.pager_snapshot.plan_mode_active,
-        "snapshot must be refreshed to true after SetPlanMode(On) — \
-             without refresh_open_settings_modals the indicator would stay stale",
-    );
-    let cur_value =
-        crate::settings::current_value_for("plan_mode", &state.ui_snapshot, &state.pager_snapshot)
-            .expect("plan_mode must resolve");
-    assert_eq!(
-        cur_value,
-        crate::settings::SettingValue::Enum("on"),
-        "current_value_for must read the refreshed snapshot",
-    );
 }
 #[test]
 fn new_session_inherits_switched_default_model_for_welcome() {

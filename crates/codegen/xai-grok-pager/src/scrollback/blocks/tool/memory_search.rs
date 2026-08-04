@@ -301,17 +301,28 @@ impl BlockContent for MemorySearchToolCallBlock {
 }
 
 fn shorten_path(path: &str) -> &str {
+    use std::path::Path;
+
     let memory_root = xai_grok_config::grok_home().join("memory");
-    let memory_prefix = memory_root.display().to_string();
-    if let Some(rest) = path.strip_prefix(&memory_prefix) {
-        let rest = rest.strip_prefix('/').unwrap_or(rest);
-        if let Some(after_slash) = rest.find('/') {
-            return &rest[after_slash + 1..];
+    let path_obj = Path::new(path);
+    if let Ok(rest) = path_obj.strip_prefix(&memory_root) {
+        let trimmed = rest
+            .to_string_lossy()
+            .trim_start_matches(['/', '\\'])
+            .to_string();
+        if let Some(pos) = trimmed.find(['/', '\\']) {
+            let tail = &trimmed[pos + 1..];
+            if let Some(at) = path.find(tail) {
+                return &path[at..];
+            }
         }
-        return rest;
+        if !trimmed.is_empty() {
+            if let Some(at) = path.rfind(trimmed.as_str()) {
+                return &path[at..];
+            }
+        }
     }
-    // Fallback: strip to filename
-    path.rsplit('/').next().unwrap_or(path)
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
 pub fn parse_memory_results(output: &str) -> Vec<MemoryResult> {

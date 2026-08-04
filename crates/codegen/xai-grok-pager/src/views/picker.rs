@@ -3223,37 +3223,33 @@ mod tests {
         let config = cfg(false, false);
         let area = Rect::new(0, 0, 60, 16);
 
-        // Render the picker; report whether the search row drew a cursor (an
-        // inverse-video cell whose bg == text_primary) plus its visible text.
-        let render_search_row = |search_active: bool| -> (bool, String) {
+        // Render the picker; the search row chrome tracks focus: active mode
+        // shows the ` search: ` label, inactive mode shows `/ to search`.
+        let render_search_row = |search_active: bool| -> String {
             let mut state = PickerState::with_mode(PickerMode::FullScreen);
             state.search_active = search_active;
             let mut buf = Buffer::empty(area);
             let hit = render_picker(&mut buf, area, &theme, &mut state, &[], &config, false);
             let y = hit.search_bar.y;
-            let mut has_cursor = false;
             let mut text = String::new();
             for x in hit.search_bar.x..hit.search_bar.x + hit.search_bar.width {
                 if let Some(cell) = buf.cell((x, y)) {
                     text.push_str(cell.symbol());
-                    if cell.bg == theme.text_primary {
-                        has_cursor = true;
-                    }
                 }
             }
-            (has_cursor, text)
+            text
         };
 
-        let (focused_cursor, _) = render_search_row(true);
+        let focused_text = render_search_row(true);
         assert!(
-            focused_cursor,
-            "focused search bar (search_active) should render a cursor",
+            focused_text.contains(" search:"),
+            "focused search bar (search_active) should render input chrome, got {focused_text:?}",
         );
 
-        let (unfocused_cursor, unfocused_text) = render_search_row(false);
+        let unfocused_text = render_search_row(false);
         assert!(
-            !unfocused_cursor,
-            "unfocused search bar must not render a cursor",
+            !unfocused_text.contains(" search:"),
+            "unfocused search bar must not render input chrome, got {unfocused_text:?}",
         );
         assert!(
             unfocused_text.contains("/ to search"),

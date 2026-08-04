@@ -486,9 +486,7 @@ pub(super) fn handle_memory_pending_loaded(
             lines.join("\n"),
         )
     };
-    agent
-        .scrollback
-        .push_block(RenderBlock::system(body));
+    agent.scrollback.push_block(RenderBlock::system(body));
     vec![]
 }
 

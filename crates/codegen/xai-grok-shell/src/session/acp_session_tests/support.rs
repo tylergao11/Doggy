@@ -364,7 +364,7 @@ pub(crate) async fn create_test_actor_ex(
         subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
         workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
         trace_config_template: std::cell::RefCell::new(None),
-        };
+    };
     (actor, event_rx)
 }
 #[cfg(test)]

@@ -141,7 +141,7 @@ mod tests {
         // 25% of 4 cells = 1 full block (8 eighths). Actually 0.25*4*8 = 8 = 1 full.
         // Let's use 12.5% of 4 cells = 0.125*4*8 = 4 eighths = half block on cell 0
         render_progress_bar(&mut buf, 0, 0, 4, 0.125, Color::White, Color::Black);
-        assert_eq!(buf[(0, 0)].symbol(), "▌"); // 4/8 = half
+        assert_eq!(buf[(0, 0)].symbol(), partial_blocks()[4]); // 4/8 partial cell
         assert_eq!(buf[(1, 0)].symbol(), " ");
     }
 

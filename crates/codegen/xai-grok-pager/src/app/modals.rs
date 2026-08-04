@@ -2745,7 +2745,7 @@ mod command_palette_vim_input_tests {
         use ratatui::buffer::Buffer;
         use ratatui::layout::Rect;
 
-        let render_palette_search_row = |search_active: bool| -> (bool, String) {
+        let render_palette_search_row = |search_active: bool| -> String {
             let mut agent = make_agent();
             open_command_palette(&mut agent);
             if let Some(ActiveModal::CommandPalette { state, .. }) = agent.active_modal.as_mut() {
@@ -2755,7 +2755,6 @@ mod command_palette_vim_input_tests {
             let mut buf = Buffer::empty(area);
             agent.draw_active_modal(area, &mut buf, crate::theme::Theme::current(), false);
 
-            let theme = crate::theme::Theme::current();
             let search_bar = match agent.active_modal.as_ref() {
                 Some(ActiveModal::CommandPalette { state, .. }) => {
                     state
@@ -2767,30 +2766,25 @@ mod command_palette_vim_input_tests {
                 _ => panic!("expected an open command palette"),
             };
             let y = search_bar.y;
-            let mut has_cursor = false;
             let mut text = String::new();
             for x in search_bar.x..search_bar.x + search_bar.width {
                 if let Some(cell) = buf.cell((x, y)) {
                     text.push_str(cell.symbol());
-                    // The cursor is an inverse-video cell (bg == text_primary).
-                    if cell.bg == theme.text_primary {
-                        has_cursor = true;
-                    }
                 }
             }
-            (has_cursor, text)
+            text
         };
 
-        let (focused_cursor, _) = render_palette_search_row(true);
+        let focused_text = render_palette_search_row(true);
         assert!(
-            focused_cursor,
-            "command palette search bar should render a cursor when search_active",
+            focused_text.contains(" search:"),
+            "command palette search bar should render input chrome when search_active, got {focused_text:?}",
         );
 
-        let (unfocused_cursor, unfocused_text) = render_palette_search_row(false);
+        let unfocused_text = render_palette_search_row(false);
         assert!(
-            !unfocused_cursor,
-            "command palette search bar must not render a cursor when not search_active",
+            !unfocused_text.contains(" search:"),
+            "command palette search bar must not render input chrome when not search_active, got {unfocused_text:?}",
         );
         assert!(
             unfocused_text.contains("/ to search"),

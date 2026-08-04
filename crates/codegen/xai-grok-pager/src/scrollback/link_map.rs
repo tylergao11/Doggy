@@ -236,9 +236,15 @@ mod tests {
 
     #[test]
     fn file_target_provenance_survives_overlay_to_visible_map() {
-        let path = Arc::<std::path::Path>::from(std::path::Path::new(
-            "/tmp/non-display-target/file name.rs",
-        ));
+        let path_buf = if cfg!(windows) {
+            std::path::PathBuf::from(r"C:\tmp\non-display-target\file name.rs")
+        } else {
+            std::path::PathBuf::from("/tmp/non-display-target/file name.rs")
+        };
+        let path = Arc::<std::path::Path>::from(path_buf.as_path());
+        let expected_url = url::Url::from_file_path(&path_buf)
+            .expect("file url")
+            .to_string();
         let mut overlay = LinkOverlay::new();
         overlay.push(OverlayLink {
             screen_row: 3,
@@ -257,7 +263,7 @@ mod tests {
         assert_eq!(resolved.open_target, Some(LinkTarget::File(path)));
         assert_eq!(
             resolved.osc8_url.unwrap().as_ref(),
-            "file:///tmp/non-display-target/file%20name.rs"
+            expected_url.as_str()
         );
         assert!(!map.links()[0].looks_like_bare_url_text());
     }

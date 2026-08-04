@@ -23,7 +23,9 @@
 use std::path::Path;
 use std::time::Duration;
 
-use crate::session::goal_plan_md::{is_any_header, is_section_header, is_separator_row, table_cells};
+use crate::session::goal_plan_md::{
+    is_any_header, is_section_header, is_separator_row, table_cells,
+};
 
 /// Plan section holding the executable checks.
 const SECTION: &str = "Deterministic checks";
@@ -107,7 +109,10 @@ pub(crate) fn parse_checks(body: &str) -> Vec<DeterministicCheck> {
             section_level = crate::session::goal_plan_md::header_level(line);
             continue;
         }
-        if in_section && is_any_header(line) && crate::session::goal_plan_md::header_level(line) <= section_level {
+        if in_section
+            && is_any_header(line)
+            && crate::session::goal_plan_md::header_level(line) <= section_level
+        {
             break;
         }
         if !in_section {
@@ -192,7 +197,9 @@ async fn run_one(cwd: &Path, check: &DeterministicCheck) -> CheckOutcome {
                 command: check.command.clone(),
                 detail: format!(
                     "exited {}: {}",
-                    out.status.code().map_or("(signal)".into(), |c| c.to_string()),
+                    out.status
+                        .code()
+                        .map_or("(signal)".into(), |c| c.to_string()),
                     tail(&combined),
                 ),
             })
@@ -304,7 +311,8 @@ mod tests {
 
     #[test]
     fn the_check_count_is_capped() {
-        let mut body = String::from("## Deterministic checks\n| # | Criterion | Command |\n|---|---|---|\n");
+        let mut body =
+            String::from("## Deterministic checks\n| # | Criterion | Command |\n|---|---|---|\n");
         for i in 1..=(MAX_CHECKS + 4) {
             body.push_str(&format!("| {i} | - | echo {i} |\n"));
         }
@@ -343,7 +351,10 @@ mod tests {
             acc
         });
         let t = tail(&out);
-        assert!(t.contains("line40"), "the useful part of a build log is last");
+        assert!(
+            t.contains("line40"),
+            "the useful part of a build log is last"
+        );
         assert!(!t.contains("line10"), "older lines are dropped: {t}");
         assert!(
             !t.contains(" /  / "),

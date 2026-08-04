@@ -99,7 +99,8 @@ impl ResolvedHints {
     }
 }
 
-/// Resolved per-tip contextual-hint gates (one bool per tip). Defaults all on.
+/// Resolved per-tip contextual-hint gates (one bool per tip).
+/// Most tips default ON; `plan_mode` defaults OFF (Plan product mode removed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedContextualHints {
     pub undo: bool,
@@ -115,7 +116,7 @@ impl Default for ResolvedContextualHints {
     fn default() -> Self {
         Self {
             undo: true,
-            plan_mode: true,
+            plan_mode: false,
             image_input: true,
             send_now: true,
             small_screen: true,
@@ -128,29 +129,30 @@ impl Default for ResolvedContextualHints {
 /// Resolve the per-tip contextual-hint gates. Per tip the precedence is:
 /// env master `GROK_CONTEXTUAL_HINTS` (all-on/off) > user config
 /// `[ui.contextual_hints].X` > remote settings `contextual_hints.X` >
-/// default ON. User-explicit beats the remote tier (which only sets the
-/// default / soft-disables); the env master is a global kill/force switch.
+/// tip default (`plan_mode` OFF; others ON). User-explicit beats the remote
+/// tier (which only sets the default / soft-disables); the env master is a
+/// global kill/force switch.
 pub fn resolve_contextual_hints(
     ui: &ContextualHints,
     remote: Option<&ContextualHintsRemote>,
 ) -> ResolvedContextualHints {
     use crate::agent::config::BoolFlag;
-    let resolve_tip = |user: Option<bool>, feature_flag: Option<bool>| -> bool {
+    let resolve_tip = |user: Option<bool>, feature_flag: Option<bool>, default: bool| -> bool {
         BoolFlag::env("GROK_CONTEXTUAL_HINTS")
             .config(user)
             .feature_flag(feature_flag)
-            .default(true)
+            .default(default)
             .resolve()
             .value
     };
     ResolvedContextualHints {
-        undo: resolve_tip(ui.undo, remote.and_then(|r| r.undo)),
-        plan_mode: resolve_tip(ui.plan_mode, remote.and_then(|r| r.plan_mode)),
-        image_input: resolve_tip(ui.image_input, remote.and_then(|r| r.image_input)),
-        send_now: resolve_tip(ui.send_now, remote.and_then(|r| r.send_now)),
-        small_screen: resolve_tip(ui.small_screen, remote.and_then(|r| r.small_screen)),
-        word_select: resolve_tip(ui.word_select, remote.and_then(|r| r.word_select)),
-        ssh_wrap: resolve_tip(ui.ssh_wrap, remote.and_then(|r| r.ssh_wrap)),
+        undo: resolve_tip(ui.undo, remote.and_then(|r| r.undo), true),
+        plan_mode: resolve_tip(ui.plan_mode, remote.and_then(|r| r.plan_mode), false),
+        image_input: resolve_tip(ui.image_input, remote.and_then(|r| r.image_input), true),
+        send_now: resolve_tip(ui.send_now, remote.and_then(|r| r.send_now), true),
+        small_screen: resolve_tip(ui.small_screen, remote.and_then(|r| r.small_screen), true),
+        word_select: resolve_tip(ui.word_select, remote.and_then(|r| r.word_select), true),
+        ssh_wrap: resolve_tip(ui.ssh_wrap, remote.and_then(|r| r.ssh_wrap), true),
     }
 }
 
@@ -267,7 +269,10 @@ mod tests {
         let _g = contextual_hints_guard();
         let resolved = resolve_contextual_hints(&ContextualHints::default(), None);
         assert!(resolved.undo, "undo defaults ON");
-        assert!(resolved.plan_mode, "plan_mode defaults ON");
+        assert!(
+            !resolved.plan_mode,
+            "plan_mode tip defaults OFF after Plan removal"
+        );
         assert!(resolved.image_input, "image_input defaults ON");
         assert!(resolved.send_now, "send_now defaults ON");
         assert!(resolved.small_screen, "small_screen defaults ON");
@@ -278,14 +283,14 @@ mod tests {
     #[test]
     fn contextual_hints_config_opts_out_per_tip() {
         let _g = contextual_hints_guard();
-        // User disables only the undo tip; the others stay on.
+        // User disables only the undo tip; other ON-default tips stay on.
         let ui = ContextualHints {
             undo: Some(false),
             ..ContextualHints::default()
         };
         let resolved = resolve_contextual_hints(&ui, None);
         assert!(!resolved.undo);
-        assert!(resolved.plan_mode);
+        assert!(!resolved.plan_mode, "plan_mode tip stays OFF when unset");
         assert!(resolved.image_input);
         assert!(resolved.send_now);
         assert!(resolved.small_screen);

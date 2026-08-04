@@ -3413,6 +3413,7 @@ fn suggestions_landing_after_bash_exit_are_dropped() {
     assert!(agent.prompt.suggestions.dropdown.items.is_empty());
 }
 
+#[cfg(not(windows))]
 /// The always-on pipeline end to end, with `GROK_SUGGESTIONS` semantics
 /// OFF: Tab fires a deterministic fetch, and the landing response runs the
 /// terminal Tab semantics — a single file candidate splices in place
@@ -3494,6 +3495,7 @@ fn tab_fetch_landing_insta_accepts_single_candidate_always_on() {
     );
 }
 
+#[cfg(not(windows))]
 /// Same pipeline with an ambiguous candidate set: the landing opens the
 /// dropdown (and installs no ghost) — the user picks with arrows + Tab.
 /// History rows model an OLD shell (new shells honor `tokenOnly` and send

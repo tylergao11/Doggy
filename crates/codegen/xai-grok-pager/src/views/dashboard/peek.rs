@@ -1382,8 +1382,8 @@ mod tests {
             "model on bottom border: {bottom:?}"
         );
         assert!(
-            bottom.contains("always-approve"),
-            "always-approve flag: {bottom:?}"
+            bottom.contains("auto"),
+            "yolo (always-approve) flag on bottom border: {bottom:?}"
         );
 
         // Pending-question (approval) mode → badge still painted.
@@ -1409,8 +1409,8 @@ mod tests {
         plain.auto_approve = false;
         let plain_bottom = badge_row(&plain, 6);
         assert!(
-            !plain_bottom.contains("always-approve"),
-            "no flag without yolo: {plain_bottom:?}",
+            !plain_bottom.contains("auto"),
+            "no yolo flag without auto-approve: {plain_bottom:?}",
         );
 
         // Plan mode → a `plan` flag (so all three Shift+Tab cycle states
@@ -1436,16 +1436,16 @@ mod tests {
             "plan flag must show in plan+yolo: {plan_yolo_bottom:?}",
         );
         assert!(
-            !plan_yolo_bottom.contains("always-approve") && !plan_yolo_bottom.contains("auto"),
-            "plan suppresses always-approve and auto: {plan_yolo_bottom:?}",
+            !plan_yolo_bottom.contains("auto"),
+            "plan suppresses yolo/auto badges: {plan_yolo_bottom:?}",
         );
 
-        // Yolo without plan → `always-approve` (and it wins over auto).
+        // Yolo without plan → `auto` (yolo badge; wins over classifier auto).
         planp.plan_mode = false;
         let yolo_bottom = badge_row(&planp, 6);
         assert!(
-            yolo_bottom.contains("always-approve") && !yolo_bottom.contains("auto"),
-            "always-approve shows once plan is off and wins over auto: {yolo_bottom:?}",
+            yolo_bottom.contains("auto"),
+            "auto badge shows once plan is off (yolo): {yolo_bottom:?}",
         );
     }
 

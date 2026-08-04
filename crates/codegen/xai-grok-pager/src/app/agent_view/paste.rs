@@ -2537,20 +2537,24 @@ pub(super) mod paste_key_tests {
     fn agent_completion_inserts_unreadable_file_url_as_path_text() {
         let mut agent = make_agent();
         agent.set_active_pane(ActivePane::Prompt, true);
+        let dir = tempfile::tempdir().unwrap();
+        let nonexistent = dir.path().join("does/not/exist/xai-primary-paste.png");
+        let url = format!("file://{}", nonexistent.display());
+        let expected = match crate::prompt_images::try_read_dropped_paths(&url).as_slice() {
+            [crate::prompt_images::DroppedPath::NonImage(path)] => format!("{} ", path.display()),
+            other => panic!("expected one NonImage drop, got {other:?}"),
+        };
         let ctx = agent_completion_ctx(&agent, None);
         let completion = agent.complete_clipboard_attachment_paste(
             ctx,
             crate::app::actions::ProbedAttachment::NoRaster,
-            Some("file:///definitely/missing/xai-primary-paste.png".to_owned()),
+            Some(url),
         );
         assert_eq!(
             completion,
             crate::app::actions::ClipboardPasteCompletion::Handled
         );
-        assert_eq!(
-            agent.prompt.text(),
-            "/definitely/missing/xai-primary-paste.png "
-        );
+        assert_eq!(agent.prompt.text(), expected);
         assert!(agent.prompt.images.is_empty());
     }
     #[test]

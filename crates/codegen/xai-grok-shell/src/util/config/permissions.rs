@@ -440,11 +440,7 @@ mod tests {
                 PermissionMode::Ask,
                 "ask",
             ),
-            (
-                "[ui]\nyolo = true\n",
-                PermissionMode::AlwaysApprove,
-                "auto",
-            ),
+            ("[ui]\nyolo = true\n", PermissionMode::AlwaysApprove, "auto"),
             ("[ui]\nyolo = false\n", PermissionMode::Ask, "ask"),
             // Precedence: permission_mode wins over legacy keys.
             (

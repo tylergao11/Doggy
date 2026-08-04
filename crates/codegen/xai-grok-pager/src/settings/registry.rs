@@ -488,7 +488,7 @@ pub fn current_value_for(
             Some(SettingValue::Bool(ui.contextual_hints.undo.unwrap_or(true)))
         }
         "contextual_hints.plan_mode" => Some(SettingValue::Bool(
-            ui.contextual_hints.plan_mode.unwrap_or(true),
+            ui.contextual_hints.plan_mode.unwrap_or(false),
         )),
         "contextual_hints.image_input" => Some(SettingValue::Bool(
             ui.contextual_hints.image_input.unwrap_or(true),
@@ -712,10 +712,14 @@ mod tests {
                     );
                 }
                 ("contextual_hints.plan_mode", SettingKind::Bool { default }) => {
+                    // Plan product mode removed — tip defaults OFF (not inherit→ON).
                     assert_eq!(
-                        *default,
-                        ui.contextual_hints.plan_mode.unwrap_or(true),
-                        "contextual_hints.plan_mode default drifts from UiConfig::default()"
+                        *default, false,
+                        "contextual_hints.plan_mode must default OFF after Plan removal"
+                    );
+                    assert_eq!(
+                        ui.contextual_hints.plan_mode, None,
+                        "UiConfig default leaves plan_mode tip unset (inherit OFF)"
                     );
                 }
                 ("contextual_hints.image_input", SettingKind::Bool { default }) => {
@@ -823,17 +827,18 @@ mod tests {
                         "auto_light_theme default drifts from UiConfig::default()",
                     );
                 }
-                // permission_mode: None on disk → "ask" fallback.
+                // Doggy product default is Auto (full allow). UiConfig may still
+                // seed the legacy wire alias `always-approve`; the registry
+                // surface spells the canonical `"auto"`.
                 ("permission_mode", SettingKind::Enum { default, .. }) => {
                     assert_eq!(
-                        ui.permission_mode, None,
-                        "test assumes UiConfig::default().permission_mode is None",
+                        ui.permission_mode.as_deref(),
+                        Some("always-approve"),
+                        "test assumes UiConfig::default().permission_mode is always-approve",
                     );
-                    let expected = "ask";
                     assert_eq!(
-                        *default, expected,
-                        "permission_mode default drifts from UiConfig::default()'s \
-                         None → 'ask' fallback (load_permission_mode contract)",
+                        *default, "auto",
+                        "permission_mode registry default must be Doggy Auto"
                     );
                 }
                 // default_model: no UiConfig mirror, resolved dynamically.
@@ -1509,9 +1514,11 @@ mod tests {
             let child = reg
                 .find(key)
                 .unwrap_or_else(|| panic!("child `{key}` must be registered"));
+            let expect_on = key != "contextual_hints.plan_mode";
             assert!(
-                matches!(child.kind, SettingKind::Bool { default: true }),
-                "child `{key}` must be a Bool defaulting ON",
+                matches!(child.kind, SettingKind::Bool { default } if default == expect_on),
+                "child `{key}` must be a Bool defaulting {}",
+                if expect_on { "ON" } else { "OFF" },
             );
         }
 
@@ -1535,7 +1542,8 @@ mod tests {
         );
         assert_eq!(
             current_value_for("contextual_hints.plan_mode", &ui, &pager),
-            Some(SettingValue::Bool(true)),
+            Some(SettingValue::Bool(false)),
+            "unset plan_mode tip inherits OFF after Plan removal",
         );
     }
 

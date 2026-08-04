@@ -73,11 +73,8 @@ const FEMALE_MASK_HIGHLIGHTS: &[(usize, usize, char)] = &[
 ];
 
 /// `(y, x_start, x_end, ch)` inclusive — `_DOGGY_FEMALE_CROWN_SPANS`.
-const FEMALE_CROWN_SPANS: &[(usize, usize, usize, char)] = &[
-    (7, 36, 42, 'H'),
-    (8, 34, 44, 'H'),
-    (9, 32, 45, 'H'),
-];
+const FEMALE_CROWN_SPANS: &[(usize, usize, usize, char)] =
+    &[(7, 36, 42, 'H'), (8, 34, 44, 'H'), (9, 32, 45, 'H')];
 
 /// `(x, y, ch)` — `_DOGGY_FEMALE_BOW_DETAILS`.
 const FEMALE_BOW_DETAILS: &[(usize, usize, char)] = &[
@@ -241,10 +238,7 @@ fn put_pixel(canvas: &mut [Vec<char>], x: usize, y: usize, value: char) {
 /// CodeDoggy `_animate_doggy_couple`: crown, bow, **eyes**, pink mask, chain.
 /// Base art alone is not enough — half-block drops female face without this.
 fn animate_doggy_couple(source: &[&str], frame: u64) -> Vec<String> {
-    let mut canvas: Vec<Vec<char>> = source
-        .iter()
-        .map(|row| row.chars().collect())
-        .collect();
+    let mut canvas: Vec<Vec<char>> = source.iter().map(|row| row.chars().collect()).collect();
     if canvas.is_empty() {
         return Vec::new();
     }

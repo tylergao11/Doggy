@@ -508,12 +508,11 @@ impl xai_tool_runtime::Tool for MemoryWriteImpl {
         let action = input.action.trim().to_ascii_lowercase();
 
         // Safety checks on content that would be written.
-        if matches!(action.as_str(), "add" | "replace") {
-            if let Some(ref c) = input.content
-                && let Some(err) = content_safety_error(c)
-            {
-                return Ok(ToolOutput::Text(error_json(err, &[]).to_string().into()));
-            }
+        if matches!(action.as_str(), "add" | "replace")
+            && let Some(ref c) = input.content
+            && let Some(err) = content_safety_error(c)
+        {
+            return Ok(ToolOutput::Text(error_json(err, &[]).to_string().into()));
         }
 
         // Ephemeral workspace cannot persist workspace MEMORY.md.
@@ -638,7 +637,11 @@ mod tests {
              > You can also edit it manually — changes will be indexed on next session.\n\n\
              ## Preferences\n\n\
              <!-- Add any cross-project preferences here -->\n";
-        assert!(parse_entries(global_stub).is_empty(), "{:?}", parse_entries(global_stub));
+        assert!(
+            parse_entries(global_stub).is_empty(),
+            "{:?}",
+            parse_entries(global_stub)
+        );
 
         let workspace_stub = "# Project Memory — /repo\n\n\
              > Curated project notes. Edit freely.\n";
@@ -835,7 +838,10 @@ mod tests {
         let long = "y".repeat(MAX_ENTRY_CHARS + 50);
         assert!(content_safety_error(&long).is_some());
         let d = assemble_memory_digest("", &long, "", MEMORY_DIGEST_BUDGET).unwrap();
-        assert!(d.contains(&long), "over-length disk entry should still inject");
+        assert!(
+            d.contains(&long),
+            "over-length disk entry should still inject"
+        );
     }
 
     /// The `USER.md` scaffold must not reach the digest, same as the other
@@ -854,7 +860,12 @@ mod tests {
         let v = overflow_json(2000, 2200, "add", 500, &["a".into()]);
         assert_eq!(v["success"], false);
         assert!(v["error"].as_str().unwrap().contains("2000/2200"));
-        assert!(v["error"].as_str().unwrap().contains("This add (500 chars)"));
+        assert!(
+            v["error"]
+                .as_str()
+                .unwrap()
+                .contains("This add (500 chars)")
+        );
         assert_eq!(v["usage"], "2000/2200");
         assert_eq!(v["current_entries"][0], "a");
     }
@@ -883,7 +894,10 @@ mod tests {
         )
         .unwrap();
         let body = d.split_once('\n').unwrap().1;
-        let at = |needle: &str| body.find(needle).unwrap_or_else(|| panic!("{needle} in {body}"));
+        let at = |needle: &str| {
+            body.find(needle)
+                .unwrap_or_else(|| panic!("{needle} in {body}"))
+        };
         assert!(at("user-entry") < at("ws-entry"));
         assert!(at("ws-entry") < at("global-entry"));
     }

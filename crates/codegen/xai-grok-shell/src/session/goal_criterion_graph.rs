@@ -113,7 +113,11 @@ impl CriterionGraph {
             nodes: (1..=criteria as u32)
                 .map(|number| CriterionNode {
                     number,
-                    depends_on: if number > 1 { vec![number - 1] } else { Vec::new() },
+                    depends_on: if number > 1 {
+                        vec![number - 1]
+                    } else {
+                        Vec::new()
+                    },
                     write_scope: Vec::new(),
                 })
                 .collect(),
@@ -358,9 +362,7 @@ pub(crate) fn with_dependents(
     loop {
         let before = invalid.len();
         for c in criteria {
-            if !invalid.contains(&c.number)
-                && c.depends_on.iter().any(|d| invalid.contains(d))
-            {
+            if !invalid.contains(&c.number) && c.depends_on.iter().any(|d| invalid.contains(d)) {
                 invalid.push(c.number);
             }
         }
@@ -389,16 +391,23 @@ pub(crate) fn build_criteria_view(
         return Vec::new();
     }
     let graph = load_criterion_graph(body, rows.len());
-    // `None` waves mean the graph could not be scheduled, so the harness runs
-    // serially — the UI says "unknown" rather than inventing a wave number that
-    // would imply parallelism the run will not have.
+    // Wave numbers are only meaningful when at least one wave has more than one
+    // criterion. A fully serial layering (the absent-table fallback, or a
+    // declared chain) is `None` for every row: inventing Wave 1..N singleton
+    // headers would promise a parallel schedule the run will not have, and it
+    // would leave the pager's "Criteria (serial):" path unreachable in
+    // production even though the wire contract documents it.
     let waves = graph.parallel_waves();
+    let concurrent = waves
+        .as_ref()
+        .is_some_and(|ws| ws.iter().any(|w| w.len() > 1));
     let wave_of = |n: u32| -> Option<u32> {
-        waves.as_ref().and_then(|ws| {
-            ws.iter()
-                .position(|w| w.contains(&n))
-                .map(|i| i as u32)
-        })
+        if !concurrent {
+            return None;
+        }
+        waves
+            .as_ref()
+            .and_then(|ws| ws.iter().position(|w| w.contains(&n)).map(|i| i as u32))
     };
     // An unattributed deferral blocks the whole goal, so it marks every row:
     // showing some criteria as still live would promise work that will not run.
@@ -416,8 +425,7 @@ pub(crate) fn build_criteria_view(
                 depends_on: node.map(|n| n.depends_on.clone()).unwrap_or_default(),
                 write_scope: node.map(|n| n.write_scope.clone()).unwrap_or_default(),
                 wave: wave_of(number),
-                deferred: all_deferred
-                    || deferred.iter().any(|d| d.criterion == Some(number)),
+                deferred: all_deferred || deferred.iter().any(|d| d.criterion == Some(number)),
             }
         })
         .collect()
@@ -614,11 +622,9 @@ mod criteria_view_tests {
         assert!(view[1].exec && !view[1].audit);
         assert_eq!(view[1].depends_on, vec![1]);
         assert_eq!(view[1].write_scope, vec!["src/b.rs".to_string()]);
-        assert_eq!(
-            (view[0].wave, view[1].wave),
-            (Some(0), Some(1)),
-            "a declared dependency puts the dependent in a later wave"
-        );
+        // A chain with no concurrent wave is serial for the UI: order lives in
+        // `depends_on`, not in invented singleton Wave N headers.
+        assert_eq!((view[0].wave, view[1].wave), (None, None));
     }
 
     #[test]
@@ -651,6 +657,58 @@ mod criteria_view_tests {
     #[test]
     fn a_plan_with_no_checklist_projects_nothing() {
         assert!(build_criteria_view("# Plan\n\n## Acceptance criteria\n1. x\n", &[]).is_empty());
+    }
+
+    #[test]
+    fn a_fully_serial_projection_emits_no_wave_numbers() {
+        // No dependency table → serial fallback. Numbering Wave 1..N here would
+        // invent a parallel schedule the run will not have, and the pager's
+        // "Criteria (serial):" path would never fire in production.
+        let body = "\
+## Acceptance criteria
+1. first
+2. second
+
+## Acceptance checklist
+| Exec | Audit | Criterion |
+|------|-------|-----------|
+| [ ] | [ ] | first |
+| [ ] | [ ] | second |
+";
+        let view = build_criteria_view(body, &[]);
+        assert!(
+            view.iter().all(|c| c.wave.is_none()),
+            "serial fallback must not invent wave numbers: {:?}",
+            view.iter().map(|c| c.wave).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_concurrent_wave_keeps_its_wave_numbers() {
+        let body = "\
+## Acceptance criteria
+1. a
+2. b
+3. c
+
+## Acceptance checklist
+| Exec | Audit | Criterion |
+|------|-------|-----------|
+| [ ] | [ ] | a |
+| [ ] | [ ] | b |
+| [ ] | [ ] | c |
+
+## Criterion dependencies
+| # | Depends on | Write scope |
+|---|------------|-------------|
+| 1 | - | src/a.rs |
+| 2 | - | src/b.rs |
+| 3 | 1 | src/c.rs |
+";
+        let view = build_criteria_view(body, &[]);
+        assert_eq!(view[0].wave, Some(0), "a and b share wave 0");
+        assert_eq!(view[1].wave, Some(0));
+        assert_eq!(view[2].wave, Some(1), "c waits for a");
     }
 }
 
@@ -803,7 +861,10 @@ mod tests {
                 scope: "src/app/mod.rs".into()
             }]
         );
-        assert!(!g.validate(2)[0].is_structural(), "serializing is a safe fix");
+        assert!(
+            !g.validate(2)[0].is_structural(),
+            "serializing is a safe fix"
+        );
     }
 
     #[test]
@@ -848,7 +909,10 @@ mod tests {
         assert!(paths_overlap("src/app", "src/app/mod.rs"));
         assert!(paths_overlap("src/app/**", "src/app/deep/x.rs"));
         assert!(paths_overlap("./src/a.rs", "src\\a.rs"));
-        assert!(paths_overlap("**/x.rs", "anywhere/y.rs"), "leading wildcard is unbounded");
+        assert!(
+            paths_overlap("**/x.rs", "anywhere/y.rs"),
+            "leading wildcard is unbounded"
+        );
         assert!(!paths_overlap("src/app", "src/appendix.rs"));
         assert!(!paths_overlap("src/a.rs", "src/b.rs"));
         assert!(!paths_overlap("src/a/**", "src/b/**"));

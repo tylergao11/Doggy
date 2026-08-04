@@ -54,9 +54,7 @@ impl SessionActor {
             return;
         }
         if matches!(mode, SessionMode::Default) {
-            self.enqueue_current_mode_update(acp::SessionModeId::new(
-                SessionMode::Default.as_id(),
-            ));
+            self.enqueue_current_mode_update(acp::SessionModeId::new(SessionMode::Default.as_id()));
             return;
         }
         let agent_def = match session_mode_id.0.as_ref() {

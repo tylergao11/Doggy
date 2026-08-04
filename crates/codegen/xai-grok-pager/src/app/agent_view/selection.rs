@@ -1468,8 +1468,20 @@ mod tests {
         use crate::scrollback::types::{DisplayMode, derive_selection_text};
         use ratatui::buffer::Buffer;
 
-        let parent_cwd = std::path::PathBuf::from("/parent/worktree");
-        let child_cwd = std::path::PathBuf::from("/child/worktree");
+        let parent_cwd = if cfg!(windows) {
+            std::path::PathBuf::from(r"D:\parent\worktree")
+        } else {
+            std::path::PathBuf::from("/parent/worktree")
+        };
+        let child_cwd = if cfg!(windows) {
+            std::path::PathBuf::from(r"D:\child\worktree")
+        } else {
+            std::path::PathBuf::from("/child/worktree")
+        };
+        let rel_lib = std::path::Path::new("src")
+            .join("lib.rs")
+            .display()
+            .to_string();
         let mut child = make_agent();
         child.session.cwd = child_cwd.clone();
         child.scrollback.set_cwd(Some(child_cwd.clone()));
@@ -1499,7 +1511,7 @@ mod tests {
             .ranges
             .iter()
             .flat_map(|range| &range.lines)
-            .find(|line| line.text == "src/lib.rs")
+            .find(|line| line.text == rel_lib)
             .expect("child-relative Read header")
             .clone();
         let content_width = rendered
@@ -1528,14 +1540,14 @@ mod tests {
                 |source| source(line.block_line_idx),
             )
             .flatten();
-        assert_eq!(source_text.as_deref(), Some("src/lib.rs"));
+        assert_eq!(source_text.as_deref(), Some(rel_lib.as_str()));
         {
             let child = parent.subagent_views.get(&child_id).expect("active child");
             let entry = child.scrollback.get(0).expect("child Read entry");
             let cached = entry.cached_output_ref();
             assert_eq!(
                 derive_selection_text(&cached.lines[line.block_line_idx]),
-                "src/lib.rs",
+                rel_lib,
                 "copy helper must not rebuild the child cache against parent cwd"
             );
         }
@@ -1562,7 +1574,7 @@ mod tests {
         };
         assert_eq!(
             parent.reconstruct_drag_copy(&drag),
-            Some(("src/lib.rs".to_string(), SelectionKind::Linear))
+            Some((rel_lib.clone(), SelectionKind::Linear))
         );
     }
 

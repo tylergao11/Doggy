@@ -434,7 +434,11 @@ pub(super) fn render_ready_wave_block(
     // that is itself waiting for that dependent. A refutation later strips the
     // audit marks of everything built on the refuted criterion, which is what
     // keeps this from burying unverified work.
-    let satisfied = |n: u32| criteria.iter().any(|c| c.number == n && (c.exec || c.audit));
+    let satisfied = |n: u32| {
+        criteria
+            .iter()
+            .any(|c| c.number == n && (c.exec || c.audit))
+    };
     let open = |c: &&crate::session::goal_tracker::CriterionView| !c.audit && !c.deferred;
     // Unclaimed AND unblocked: the criteria that are actually work right now.
     // A claimed-but-unaudited criterion is excluded on purpose — its Exec tick
@@ -537,9 +541,10 @@ impl super::SessionActor {
                     declined,
                     FanoutDeclined::Disabled | FanoutDeclined::NotEnoughReady { .. }
                 ) {
-                    self.events.emit(crate::session::events::Event::GoalFanoutDeclined {
-                        reason: declined.as_const_str(),
-                    });
+                    self.events
+                        .emit(crate::session::events::Event::GoalFanoutDeclined {
+                            reason: declined.as_const_str(),
+                        });
                 }
                 return None;
             }
@@ -562,9 +567,10 @@ impl super::SessionActor {
             role_agent_type: None,
         };
         let numbers: Vec<u32> = wave.iter().map(|c| c.number).collect();
-        self.events.emit(crate::session::events::Event::GoalFanoutStarted {
-            criteria: numbers.clone(),
-        });
+        self.events
+            .emit(crate::session::events::Event::GoalFanoutStarted {
+                criteria: numbers.clone(),
+            });
         let started = std::time::Instant::now();
         let workers = run_wave(&spawner, objective, &wave).await;
         let merges = merge_wave(&self.session_id_string(), &workers).await;
@@ -585,11 +591,12 @@ impl super::SessionActor {
             tracing::warn!(error = %e, "criterion wave: could not set Exec marks");
         }
         self.record_observed_writes(&plan, &merges);
-        self.events.emit(crate::session::events::Event::GoalFanoutFinished {
-            criteria: numbers,
-            landed: landed.clone(),
-            latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        });
+        self.events
+            .emit(crate::session::events::Event::GoalFanoutFinished {
+                criteria: numbers,
+                landed: landed.clone(),
+                latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            });
         Some(render_wave_report(&workers, &merges))
     }
 
@@ -735,7 +742,7 @@ impl super::SessionActor {
                 // The new rows must reach the criteria view, or the next wave
                 // schedules from a plan the scheduler has not read.
                 if landed {
-                    self.goal_tracker.lock().refresh_criteria_view();
+                    self.goal_tracker.lock().force_refresh_criteria_view();
                 }
             }
             Err(e) => tracing::warn!(error = %e, "goal amender: could not amend the plan"),
@@ -1088,7 +1095,10 @@ mod ready_wave_tests {
 
     #[test]
     fn a_flat_plan_with_no_scopes_adds_nothing_the_checklist_lacks() {
-        let criteria = vec![view(1, false, vec![], vec![]), view(2, false, vec![], vec![])];
+        let criteria = vec![
+            view(1, false, vec![], vec![]),
+            view(2, false, vec![], vec![]),
+        ];
         assert!(
             render_ready_wave_block(&criteria).is_empty(),
             "an unconditional block trains the model to skim past it"
@@ -1138,7 +1148,10 @@ mod ready_wave_tests {
         // Waiting for criterion 1's AUDIT here would wedge the run: the panel
         // does not run until every criterion is claimed, and criterion 2 cannot
         // be claimed while this block calls it off-limits.
-        let mut criteria = vec![view(1, false, vec![], vec![]), view(2, false, vec![1], vec![])];
+        let mut criteria = vec![
+            view(1, false, vec![], vec![]),
+            view(2, false, vec![1], vec![]),
+        ];
         criteria[0].exec = true;
         let block = render_ready_wave_block(&criteria);
         assert!(
@@ -1157,7 +1170,10 @@ mod ready_wave_tests {
 
     #[test]
     fn all_work_claimed_asks_for_verification_instead_of_going_quiet() {
-        let mut criteria = vec![view(1, false, vec![], vec![]), view(2, false, vec![], vec![])];
+        let mut criteria = vec![
+            view(1, false, vec![], vec![]),
+            view(2, false, vec![], vec![]),
+        ];
         for c in &mut criteria {
             c.exec = true;
         }
@@ -1171,7 +1187,10 @@ mod ready_wave_tests {
 
     #[test]
     fn deferred_work_is_never_offered() {
-        let mut criteria = vec![view(1, false, vec![], vec!["a"]), view(2, false, vec![], vec!["b"])];
+        let mut criteria = vec![
+            view(1, false, vec![], vec!["a"]),
+            view(2, false, vec![], vec!["b"]),
+        ];
         criteria[1].deferred = true;
         let block = render_ready_wave_block(&criteria);
         assert!(block.contains("criterion 1"), "{block}");

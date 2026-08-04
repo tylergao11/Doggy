@@ -12,7 +12,10 @@ pub(crate) fn is_section_header(line: &str, name: &str) -> bool {
     if !trimmed.starts_with('#') {
         return false;
     }
-    trimmed.trim_start_matches('#').trim().eq_ignore_ascii_case(name)
+    trimmed
+        .trim_start_matches('#')
+        .trim()
+        .eq_ignore_ascii_case(name)
 }
 
 /// Number of leading `#` characters, i.e. the header depth.
@@ -31,7 +34,11 @@ pub(crate) fn table_cells(line: &str) -> Vec<&str> {
     if !trimmed.starts_with('|') {
         return Vec::new();
     }
-    trimmed.trim_matches('|').split('|').map(str::trim).collect()
+    trimmed
+        .trim_matches('|')
+        .split('|')
+        .map(str::trim)
+        .collect()
 }
 
 /// True when the row is a separator like `|---|:---:|---|`.
@@ -76,10 +83,22 @@ mod tests {
 
     #[test]
     fn section_header_matches_any_level_and_ignores_case() {
-        assert!(is_section_header("## Acceptance criteria", "acceptance criteria"));
-        assert!(is_section_header("#### ACCEPTANCE CRITERIA", "acceptance criteria"));
-        assert!(!is_section_header("Acceptance criteria", "acceptance criteria"));
-        assert!(!is_section_header("## Acceptance criteria extra", "acceptance criteria"));
+        assert!(is_section_header(
+            "## Acceptance criteria",
+            "acceptance criteria"
+        ));
+        assert!(is_section_header(
+            "#### ACCEPTANCE CRITERIA",
+            "acceptance criteria"
+        ));
+        assert!(!is_section_header(
+            "Acceptance criteria",
+            "acceptance criteria"
+        ));
+        assert!(!is_section_header(
+            "## Acceptance criteria extra",
+            "acceptance criteria"
+        ));
     }
 
     #[test]

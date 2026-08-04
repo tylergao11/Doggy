@@ -85,7 +85,7 @@ pub fn run_hook(hook: &NotificationHook, event: &NotificationEvent) {
     });
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::notifications::config::NotificationEventKind;

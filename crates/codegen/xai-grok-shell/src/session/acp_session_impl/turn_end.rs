@@ -529,7 +529,7 @@ mod infra_failure_tests {
     use super::*;
 
     fn err(code: i32) -> acp::Error {
-        acp::Error::new(code.into(), "boom")
+        acp::Error::new(code, "boom")
     }
 
     fn plan_for(code: i32) -> Option<InfraFailure> {
@@ -549,7 +549,9 @@ mod infra_failure_tests {
         assert!(rate_limited.message.starts_with("Turn failed:"));
 
         assert!(
-            plan_for(-32603).expect("a server error is an infra failure").retryable,
+            plan_for(-32603)
+                .expect("a server error is an infra failure")
+                .retryable,
             "a transient server error deserves a retry",
         );
 

@@ -38,8 +38,7 @@ use super::dashboard::{
     dispatch_open_dashboard, ensure_dashboard_state, resolve_location_input,
 };
 use super::modes::{
-    YOLO_ON_UNDER_PLAN_TOAST, active_agent_plan_nudge_state, dispatch_cycle_mode_and_sync,
-    permission_mode_toast,
+    YOLO_ON_UNDER_PLAN_TOAST, active_agent_plan_nudge_state, permission_mode_toast,
 };
 use super::permissions::drain_permission_queue;
 use super::prompt::{
@@ -699,7 +698,9 @@ fn two_agent_app_with_bg_task() -> AppView {
 }
 fn project_picker_app() -> AppView {
     let mut app = test_app();
-    app.cwd = PathBuf::from("/tmp");
+    // Must be a non-project dir for `needs_project_picker()`. POSIX `/tmp` is
+    // excluded on Unix; on Windows use `%TEMP%` (also classified as system).
+    app.cwd = std::env::temp_dir();
     app.project_picker_shown = false;
     app
 }
@@ -845,6 +846,12 @@ fn agent_toast(app: &AppView) -> Option<String> {
         .toast
         .as_ref()
         .map(|(s, _)| s.clone())
+}
+
+/// Toast expectations must run through the same glyph fallback as `show_toast`
+/// (legacy Windows consoles rewrite ✓/✗/⚠).
+fn expected_toast(msg: &str) -> String {
+    crate::glyphs::legacy_glyph_fallback(msg).into_owned()
 }
 /// Use the `theme_cache::test_lock` to serialize tests that touch
 /// the in-memory theme state (single mutable global). Mirrors the

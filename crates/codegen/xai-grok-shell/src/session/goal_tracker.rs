@@ -556,8 +556,10 @@ pub struct CriterionView {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub write_scope: Vec<String>,
     /// 0-based parallel wave: every criterion in a wave can run concurrently.
-    /// `None` when the dependency table could not be scheduled and the harness
-    /// fell back to a fully serial order.
+    /// `None` when no wave has more than one member — the run is fully serial
+    /// (missing/broken dependency table, or a declared chain with no fan-out).
+    /// The UI draws that as a flat list rather than inventing singleton "Wave N"
+    /// headers that imply a parallel schedule the run will not have.
     pub wave: Option<u32>,
     /// The run gave up on this one; it is reported, not retried.
     pub deferred: bool,
@@ -1287,9 +1289,7 @@ impl GoalTracker {
     /// Holding the lock across nested lock helpers or long FS freezes
     /// the session LocalSet: `completion_phase` stays `"checking"`,
     /// `shell.cancel.processing` never appears.
-    pub fn complete_defer_scratch_cleanup(
-        &mut self,
-    ) -> (bool, Option<DeferredGoalFsCleanup>) {
+    pub fn complete_defer_scratch_cleanup(&mut self) -> (bool, Option<DeferredGoalFsCleanup>) {
         let job = self.deferred_fs_cleanup_job();
         let applied = self.complete_inner(/* defer_fs */ true);
         (applied, if applied { job } else { None })
@@ -1343,9 +1343,7 @@ impl GoalTracker {
     }
 
     /// Like [`Self::budget_limit`], but defers all terminal FS work.
-    pub fn budget_limit_defer_scratch_cleanup(
-        &mut self,
-    ) -> (bool, Option<DeferredGoalFsCleanup>) {
+    pub fn budget_limit_defer_scratch_cleanup(&mut self) -> (bool, Option<DeferredGoalFsCleanup>) {
         let job = self.deferred_fs_cleanup_job();
         let applied = self.budget_limit_inner(/* defer_fs */ true);
         (applied, if applied { job } else { None })
@@ -1511,7 +1509,8 @@ impl GoalTracker {
         if o.deferred_criteria.iter().any(|d| d.criterion == criterion) {
             return false;
         }
-        o.deferred_criteria.push(DeferredCriterion { criterion, reason });
+        o.deferred_criteria
+            .push(DeferredCriterion { criterion, reason });
         true
     }
 
@@ -1540,10 +1539,21 @@ impl GoalTracker {
             return;
         };
         o.criteria_view_mtime = mtime;
-        o.criteria_view = crate::session::goal_criterion_graph::build_criteria_view(
-            &body,
-            &o.deferred_criteria,
-        );
+        o.criteria_view =
+            crate::session::goal_criterion_graph::build_criteria_view(&body, &o.deferred_criteria);
+    }
+
+    /// Re-read the plan even when its mtime looks unchanged.
+    ///
+    /// Used right after a known in-process write (Exec marks, scope amend,
+    /// criterion append): those writes change the contract the UI and the next
+    /// wave both read, and a coarse filesystem clock must not let the old
+    /// projection outlive them.
+    pub fn force_refresh_criteria_view(&mut self) {
+        if let Some(o) = self.orchestration.as_mut() {
+            o.criteria_view_mtime = None;
+        }
+        self.refresh_criteria_view();
     }
 
     /// Give the still-reachable criteria a fresh verification budget after a
@@ -1581,7 +1591,11 @@ impl GoalTracker {
         if o.deferred_criteria.iter().any(|d| d.criterion.is_none()) {
             return true;
         }
-        let deferred: Vec<u32> = o.deferred_criteria.iter().filter_map(|d| d.criterion).collect();
+        let deferred: Vec<u32> = o
+            .deferred_criteria
+            .iter()
+            .filter_map(|d| d.criterion)
+            .collect();
         (1..=total as u32).all(|n| deferred.contains(&n))
     }
 
@@ -3468,7 +3482,10 @@ mod tests {
         // The first `max` failures are absorbed; the one after is not.
         assert!(t.record_infra_failure(2), "first failure must retry");
         assert!(t.record_infra_failure(2), "second failure must retry");
-        assert!(!t.record_infra_failure(2), "third failure exhausts the budget");
+        assert!(
+            !t.record_infra_failure(2),
+            "third failure exhausts the budget"
+        );
         assert_eq!(t.snapshot().unwrap().infra_retry_streak, 3);
 
         // A turn that gets through refills it, so an intermittent failure over

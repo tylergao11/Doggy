@@ -407,7 +407,9 @@ mod tests {
     fn display_user_grok_path_joins_relative() {
         let path = display_user_grok_path("config.toml");
         assert!(path.ends_with("/config.toml") || path.ends_with("\\config.toml"));
-        assert!(path.contains(".Doggy") || path.contains("$DOGGY_HOME") || path.contains("$GROK_HOME"));
+        assert!(
+            path.contains(".Doggy") || path.contains("$DOGGY_HOME") || path.contains("$GROK_HOME")
+        );
     }
 
     #[test]

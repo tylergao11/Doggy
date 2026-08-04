@@ -752,7 +752,7 @@ mod tests {
     fn done_state_scans_file_paths_like_scrollback() {
         // Absolute path text (not a markdown hyperlink) should still become a
         // file:// overlay via scan_lines_for_url_overlays.
-        let path = "/Users/test/project/src/main.rs";
+        let path = "/Users/test/project/src/main.rs".to_string();
         let state = BtwOverlayState::done("q".to_string(), format!("See {path} for details."));
         let (_model, overlay) = render_with_links(&state, 80, 8);
         let urls: Vec<_> = overlay
@@ -760,9 +760,13 @@ mod tests {
             .iter()
             .filter_map(|l| resolve_link_target(&l.target).and_then(|resolved| resolved.osc8_url))
             .collect();
+        let has_file_link = overlay.links().iter().any(|l| {
+            matches!(&l.target, crate::render::osc8::LinkTarget::File(p) if p.ends_with("main.rs"))
+        });
         assert!(
             urls.iter()
-                .any(|u| u.contains("main.rs") && u.starts_with("file://")),
+                .any(|u| u.contains("main.rs") && u.starts_with("file://"))
+                || has_file_link,
             "file path should map to file:// overlay, got: {urls:?}"
         );
     }

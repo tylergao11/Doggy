@@ -4255,6 +4255,18 @@ mod tests {
         content
     }
 
+    fn nav_prev_chip() -> String {
+        format!("[{}]", crate::glyphs::chevron_left())
+    }
+
+    fn nav_next_chip() -> String {
+        format!("[{}]", crate::glyphs::chevron())
+    }
+
+    fn nav_chip_pair() -> String {
+        format!("{}{}", nav_prev_chip(), nav_next_chip())
+    }
+
     /// edge cases 1+25: empty state with no agents renders
     /// the single hint line (never a fully blank screen).
     #[test]
@@ -4513,9 +4525,9 @@ mod tests {
             content.contains("Add responsiveness to /context"),
             "title must render, got: {content:?}",
         );
-        for chip in ["[‹]", "[›]", "[Dashboard]"] {
+        for chip in [nav_prev_chip(), nav_next_chip(), "[Dashboard]".to_string()] {
             assert!(
-                content.contains(chip),
+                content.contains(chip.as_str()),
                 "overlay must paint `{chip}`, got: {content:?}",
             );
         }
@@ -4564,8 +4576,8 @@ mod tests {
         // The rendered row should literally contain the adjacent
         // pair `[‹][›]` (no internal whitespace).
         assert!(
-            content.contains("[‹][›]"),
-            "row must contain `[‹][›]` as a single adjacent group, got: {content:?}",
+            content.contains(nav_chip_pair().as_str()),
+            "row must contain adjacent nav chips, got: {content:?}",
         );
         let close = chrome.close_rect.unwrap();
         let close_cell = &buf[(close.x, close.y)];
@@ -4914,9 +4926,9 @@ mod tests {
             content.contains("Add responsiveness to /context"),
             "title must render, got: {content:?}",
         );
-        for chip in ["[‹]", "[›]", "[Dashboard]"] {
+        for chip in [nav_prev_chip(), nav_next_chip(), "[Dashboard]".to_string()] {
             assert!(
-                content.contains(chip),
+                content.contains(chip.as_str()),
                 "header must paint `{chip}`, got: {content:?}",
             );
         }
@@ -5217,8 +5229,8 @@ mod tests {
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains('\u{2717}'),
-            "close affordance [✗] missing, got: {content:?}",
+            content.contains(crate::glyphs::ballot_x()),
+            "close affordance missing, got: {content:?}",
         );
         let close_rect = state
             .popup_close_rect
@@ -6375,7 +6387,11 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 2));
         let theme = Theme::current();
         let mut state = DashboardState::new();
-        state.spinner_tick = 8; // → dot_spinner_frames()[2] = `⸬`.
+        state.spinner_tick = 8;
+        let spinner = {
+            let frames = crate::glyphs::dot_spinner_frames();
+            frames[(8 / SPINNER_DIVISOR) as usize % frames.len()]
+        };
         let row = DashboardRow {
             id: DashboardRowId::TopLevel(crate::app::agent::AgentId(1)),
             label: "who are you?".to_string(),
@@ -6410,8 +6426,8 @@ mod tests {
         );
         assert_eq!(
             buf[(2, 0)].symbol(),
-            "\u{2e2c}",
-            "row 0 col 2 must be the spinner glyph `⸬` at tick=8",
+            spinner,
+            "row 0 col 2 must be the working spinner at tick=8",
         );
         assert_eq!(
             buf[(3, 0)].symbol(),

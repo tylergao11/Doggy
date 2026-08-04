@@ -289,7 +289,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
                 workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
                 trace_config_template: std::cell::RefCell::new(None),
-        });
+            });
             let prompt_blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(
                 "hello persist".to_string(),
             ))];
@@ -562,8 +562,8 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 stale_claim_secs: 60,
                 search_source: "tool",
                 embedding_credentials: crate::session::memory::EndpointScopedCredentials::none(),
-        curated_char_limit: crate::config::DEFAULT_CURATED_CHAR_LIMIT,
-        };
+                curated_char_limit: crate::config::DEFAULT_CURATED_CHAR_LIMIT,
+            };
             let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
             let actor = Arc::new(SessionActor {
                 session_info: session_info.clone(),
@@ -751,7 +751,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
                 workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
                 trace_config_template: std::cell::RefCell::new(None),
-        });
+            });
             let _ = actor
                 .process_conversation_turn_with_recovery("disabled-memory", None, None, None)
                 .await;

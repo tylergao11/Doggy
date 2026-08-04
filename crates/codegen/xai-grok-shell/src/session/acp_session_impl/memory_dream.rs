@@ -404,8 +404,8 @@ impl SessionActor {
         }
 
         let user_md = std::fs::read_to_string(storage.user_memory_file()).unwrap_or_default();
-        let workspace_md = std::fs::read_to_string(storage.workspace_memory_file())
-            .unwrap_or_default();
+        let workspace_md =
+            std::fs::read_to_string(storage.workspace_memory_file()).unwrap_or_default();
         let global_md = std::fs::read_to_string(storage.global_memory_file()).unwrap_or_default();
         let limit = self.memory.curated_char_limit;
 

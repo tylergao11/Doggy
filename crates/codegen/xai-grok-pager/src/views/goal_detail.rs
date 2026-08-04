@@ -13,9 +13,7 @@ use xai_grok_shell::tools::{TodoItem, TodoStatus};
 
 use xai_grok_shell::extensions::notification::GoalClassifierVerdict;
 
-use crate::app::agent::{
-    GoalCriterion, GoalCriterionState, GoalDisplayState, GoalDisplayStatus,
-};
+use crate::app::agent::{GoalCriterion, GoalCriterionState, GoalDisplayState, GoalDisplayStatus};
 use crate::render::SafeBuf;
 use crate::theme::Theme;
 use crate::views::agent_status::{
@@ -381,19 +379,24 @@ fn render_criterion_graph(
                     .join(",");
                 format!(" ← {list}")
             };
+            let marker = format!("    {} ", state.glyph());
+            let index = format!("{}. ", c.number);
+            // Everything except the criterion text is fixed for this row, so
+            // the text gets what is left. `set_line` clips at `w` by dropping
+            // whole trailing spans, and the dependency suffix is the last one —
+            // a text budget measured in `char`s rather than columns would let a
+            // CJK criterion push `← 1,2` off the row the graph exists to show.
+            let reserved = unicode_width::UnicodeWidthStr::width(marker.as_str())
+                + unicode_width::UnicodeWidthStr::width(index.as_str())
+                + unicode_width::UnicodeWidthStr::width(deps.as_str());
+            let text = truncate_to_width(c.text.trim(), (w as usize).saturating_sub(reserved));
             buf.set_line_safe(
                 x,
                 y,
                 &Line::from(vec![
-                    Span::styled(format!("    {} ", state.glyph()), state_style),
-                    Span::styled(
-                        format!("{}. ", c.number),
-                        Style::default().fg(theme.gray_dim),
-                    ),
-                    Span::styled(
-                        truncate_criterion(&c.text),
-                        Style::default().fg(theme.text_secondary),
-                    ),
+                    Span::styled(marker, state_style),
+                    Span::styled(index, Style::default().fg(theme.gray_dim)),
+                    Span::styled(text, Style::default().fg(theme.text_secondary)),
                     Span::styled(deps, Style::default().fg(theme.gray_dim)),
                 ]),
                 w,
@@ -402,22 +405,6 @@ fn render_criterion_graph(
         }
     }
     y
-}
-
-/// Longest criterion text shown in the graph.
-///
-/// Criteria are one-line outcomes, but a planner sometimes writes a sentence.
-/// Truncating keeps the dependency suffix (`← 1,2`) on screen, which is the part
-/// the graph exists to show.
-const CRITERION_TEXT_MAX: usize = 56;
-
-fn truncate_criterion(text: &str) -> String {
-    let trimmed = text.trim();
-    if trimmed.chars().count() <= CRITERION_TEXT_MAX {
-        return trimmed.to_string();
-    }
-    let kept: String = trimmed.chars().take(CRITERION_TEXT_MAX - 1).collect();
-    format!("{kept}…")
 }
 
 /// True when the goal carries at least one signal from the
@@ -1083,10 +1070,7 @@ pub fn render_goal_detail(
         );
         y += 1;
         if y < inner.y + inner.height {
-            let phase_label = goal
-                .completion_phase
-                .map(|p| p.label())
-                .unwrap_or("—");
+            let phase_label = goal.completion_phase.map(|p| p.label()).unwrap_or("—");
             buf.set_line_safe(
                 x,
                 y,
@@ -1431,6 +1415,26 @@ mod tests {
     }
 
     #[test]
+    fn a_wide_criterion_keeps_its_dependency_suffix_on_screen() {
+        let mut goal = make_goal();
+        let mut long = criterion(2, Some(1), vec![1]);
+        // 40 CJK chars = 80 display columns, but only 40 `char`s: a cap counted
+        // in chars lets the row exceed the popup, and `set_line` then drops the
+        // trailing dependency span — the one thing the graph exists to show.
+        long.text = "验".repeat(40);
+        goal.criteria = vec![criterion(1, Some(0), vec![]), long];
+        let area = Rect::new(0, 0, 80, 40);
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default();
+        render_criterion_graph(&mut buf, &goal, &theme, 1, 0, 78, area);
+        let text = buffer_text(&buf);
+        assert!(
+            text.contains("← 1"),
+            "a long criterion must lose its own text, never its dependencies: {text}"
+        );
+    }
+
+    #[test]
     fn a_serial_run_is_not_drawn_as_waves() {
         let mut goal = make_goal();
         goal.criteria = vec![criterion(1, None, vec![]), criterion(2, None, vec![1])];
@@ -1450,13 +1454,18 @@ mod tests {
     #[test]
     fn the_graph_never_draws_past_the_popup() {
         let mut goal = make_goal();
-        goal.criteria = (1..=20).map(|n| criterion(n, Some(n - 1), vec![])).collect();
+        goal.criteria = (1..=20)
+            .map(|n| criterion(n, Some(n - 1), vec![]))
+            .collect();
         // Only 6 rows of room; the renderer must stop, not paint outside.
         let area = Rect::new(0, 0, 80, 6);
         let mut buf = Buffer::empty(area);
         let theme = Theme::default();
         let end = render_criterion_graph(&mut buf, &goal, &theme, 1, 0, 78, area);
-        assert!(end <= area.y + area.height, "clipped at the bottom, got {end}");
+        assert!(
+            end <= area.y + area.height,
+            "clipped at the bottom, got {end}"
+        );
     }
 
     #[test]
@@ -2388,12 +2397,21 @@ mod tests {
         render_goal_detail(&mut buf, area, &goal, &todos, 0, None, 0, false);
 
         let text = buffer_text(&buf);
-        // Completed = ✓, InProgress = ▶, Pending = □, Cancelled = ✗
-        // Match icon + content to disambiguate from the close button [✗].
-        assert!(text.contains("\u{2713} done"), "missing ✓ for Completed");
+        // Match the glyphs the renderer actually paints — on legacy ConHost
+        // `check_mark`/`ballot_x` fall back (✓→√, ✗→x), so hardcoding the
+        // fancy codepoints fails on Windows even when the icons are correct.
+        let check = crate::glyphs::check_mark();
+        let ballot = crate::glyphs::ballot_x();
+        assert!(
+            text.contains(&format!("{check} done")),
+            "missing {check} for Completed"
+        );
         assert!(text.contains("\u{25b6} wip"), "missing ▶ for InProgress");
         assert!(text.contains("\u{25a1} todo"), "missing □ for Pending");
-        assert!(text.contains("\u{2717} skip"), "missing ✗ for Cancelled");
+        assert!(
+            text.contains(&format!("{ballot} skip")),
+            "missing {ballot} for Cancelled"
+        );
     }
 
     #[test]

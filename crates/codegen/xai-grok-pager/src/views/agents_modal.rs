@@ -395,7 +395,10 @@ pub fn merge_persona_lists(bundle: &BundleState, cwd: &Path) -> Vec<PersonaDetai
         }
     }
     let dirs = [
-        (ConfigFileScope::Project, cwd.join(".Doggy").join("personas")),
+        (
+            ConfigFileScope::Project,
+            cwd.join(".Doggy").join("personas"),
+        ),
         (ConfigFileScope::User, grok_home.join("personas")),
     ];
     for (scope, dir) in dirs {

@@ -519,18 +519,11 @@
         );
     }
 
-    /// Positive wiring: a permission_mode-bearing push with the latch held
-    /// must reach the applier through the real handler. The handler's ambient
-    /// effective-config read decides WHICH mode wins (exact outcomes are
-    /// pinned on the applier with injected TOML), so this asserts the
-    /// applier's host-independent signature instead: the non-canonical
-    /// sentinel display is rewritten to a canonical mode, latch preserved.
     #[test]
     fn permission_mode_soft_default_push_reaches_applier() {
         let mut app = make_app_with_agent("sess-wire-pm");
         app.auto_mode_gate = true;
         app.permission_mode_from_soft_default = true;
-        // Outside the applier's output alphabet — only the applier rewrites it.
         app.current_ui.permission_mode = Some("sentinel-not-a-mode".into());
 
         let push = acp::ExtNotification::new(
@@ -542,14 +535,10 @@
             .into(),
         );
         let _ = handle_ext_notification(&push, &mut app);
-        let display = app
-            .current_ui
-            .permission_mode
-            .as_deref()
-            .expect("applier always writes a display mode");
-        assert!(
-            matches!(display, "ask" | "auto" | "always-approve" | "default"),
-            "soft push must rewrite the sentinel display via the applier, got {display:?}"
+        assert_eq!(
+            app.current_ui.permission_mode.as_deref(),
+            Some("auto"),
+            "soft push must rewrite the sentinel to Doggy Auto"
         );
         assert!(
             app.permission_mode_from_soft_default,
@@ -557,9 +546,8 @@
         );
     }
 
-    /// Soft-origin recompute with injected TOML (deterministic — no host
-    /// config): remote always-approve arms default_yolo + UI, keeps the soft
-    /// latch, and persists nothing.
+    /// Soft re-arm always lands on Doggy Auto; remote always-approve is ignored
+    /// as a distinct mode (it still means full tool permission when unpinned).
     #[test]
     fn permission_mode_soft_default_applies_remote_always_approve() {
         let mut app = make_app_with_agent("sess-pm");
@@ -573,10 +561,10 @@
             None,
             Some("always-approve"),
         );
-        assert!(app.default_yolo, "remote always-approve must arm default_yolo");
+        assert!(app.default_yolo, "unpinned soft default arms default_yolo");
         assert_eq!(
             app.current_ui.permission_mode.as_deref(),
-            Some("always-approve"),
+            Some("auto"),
         );
         assert!(
             app.permission_mode_from_soft_default,
@@ -588,8 +576,7 @@
         );
     }
 
-    /// Explicit `null` recomputes with remote=None (unlike field omission):
-    /// with no TOML permission key the soft always-approve drops back to Ask.
+    /// Explicit `null` still recomputes the Doggy soft default (Auto), not Ask.
     #[test]
     fn permission_mode_explicit_null_clears_soft_always_approve() {
         let mut app = make_app_with_agent("sess-null-pm");
@@ -599,8 +586,11 @@
         app.default_yolo = true;
 
         super::super::settings::apply_soft_default_permission_mode(&mut app, None, None);
-        assert!(!app.default_yolo, "remote null must disarm a soft always-approve");
-        assert_eq!(app.current_ui.permission_mode.as_deref(), Some("ask"));
+        assert!(
+            app.default_yolo,
+            "unpinned soft default keeps default_yolo armed"
+        );
+        assert_eq!(app.current_ui.permission_mode.as_deref(), Some("auto"));
         assert!(app.permission_mode_from_soft_default);
         assert!(
             app.pending_effects.is_empty(),
@@ -608,7 +598,8 @@
         );
     }
 
-    /// Policy pin and auto gate clamp a soft re-arm to Ask enforcement/display.
+    /// Policy pin keeps default_yolo off; display is still Auto. The legacy
+    /// auto_mode_gate no longer demotes Auto → Ask.
     #[test]
     fn permission_mode_soft_default_respects_pin_and_gate() {
         let mut app = make_app_with_agent("sess-pin-pm");
@@ -620,17 +611,25 @@
             None,
             Some("always-approve"),
         );
-        assert!(!app.default_yolo, "policy pin must block a remote always-approve");
-        assert_eq!(app.current_ui.permission_mode.as_deref(), Some("ask"));
+        assert!(!app.default_yolo, "policy pin must block default_yolo");
+        assert_eq!(app.current_ui.permission_mode.as_deref(), Some("auto"));
 
         let mut app = make_app_with_agent("sess-gate-pm");
         app.permission_mode_from_soft_default = true;
         app.auto_mode_gate = false;
-        super::super::settings::apply_soft_default_permission_mode(&mut app, None, Some("auto"));
-        assert!(!app.default_yolo);
+        super::super::settings::apply_soft_default_permission_mode(
+            &mut app,
+            None,
+            Some("auto"),
+        );
+        assert!(
+            app.default_yolo,
+            "legacy gate off does not demote Doggy Auto"
+        );
         assert_eq!(
             app.current_ui.permission_mode.as_deref(),
-            Some("ask"),
-            "gated-off Auto must display as Ask"
+            Some("auto"),
+            "gated-off legacy flag still displays Auto"
         );
     }
+

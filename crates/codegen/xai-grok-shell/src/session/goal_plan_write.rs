@@ -78,10 +78,8 @@ mod tests {
                 s.spawn(move || {
                     with_plan_lock(&path, || {
                         let body = std::fs::read_to_string(&path).unwrap();
-                        let updated = body.replace(
-                            &format!("| [x] | row{i} |"),
-                            &format!("| [ ] | row{i} |"),
-                        );
+                        let updated = body
+                            .replace(&format!("| [x] | row{i} |"), &format!("| [ ] | row{i} |"));
                         std::fs::write(&path, updated).unwrap();
                     });
                 });

@@ -69,9 +69,9 @@ mod tests {
         // Last col: right padding
 
         // Check accent is at column 2
-        assert_eq!(buf.cell((2, 0)).unwrap().symbol(), "┃");
-        assert_eq!(buf.cell((2, 1)).unwrap().symbol(), "┃");
-        assert_eq!(buf.cell((2, 2)).unwrap().symbol(), "┃");
+        assert_eq!(buf.cell((2, 0)).unwrap().symbol(), crate::glyphs::accent_bar());
+        assert_eq!(buf.cell((2, 1)).unwrap().symbol(), crate::glyphs::accent_bar());
+        assert_eq!(buf.cell((2, 2)).unwrap().symbol(), crate::glyphs::accent_bar());
 
         // Check content starts at column 3 (after accent)
         // Row 0 is vpad (empty), row 1 is content

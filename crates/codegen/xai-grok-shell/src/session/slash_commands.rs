@@ -62,8 +62,7 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         name: "always-approve",
-        description:
-            "Toggle full tool permission (default on; Auto/Goal postures use full permission)",
+        description: "Toggle full tool permission (default on; Auto/Goal postures use full permission)",
         argument_hint: Some("on|off"),
         aliases: &["yolo"],
         gate: BuiltinGate::AlwaysOn,

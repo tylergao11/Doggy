@@ -25,4 +25,3 @@ impl SlashCommand for AlwaysApproveCommand {
         CommandResult::Action(Action::SetPermissionMode(PermissionModeKind::Auto))
     }
 }
-

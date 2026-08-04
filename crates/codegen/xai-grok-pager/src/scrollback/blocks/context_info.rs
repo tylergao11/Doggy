@@ -883,10 +883,13 @@ mod tests {
     // content matches each category's glyph.
     // -------------------------------------------------------------------
 
-    const SYSTEM_GLYPH_TEST: &str = "\u{25C6}";
-    const TOOLS_GLYPH_TEST: &str = "\u{25C8}";
-    const MESSAGES_GLYPH_TEST: &str = "\u{25C6}"; // same as system; distinguished by color in real render
-    const FREE_GLYPH_TEST: &str = "\u{25C7}";
+    fn bar_cell_glyphs() -> (&'static str, &'static str, &'static str) {
+        (
+            crate::glyphs::diamond_filled(),
+            crate::glyphs::diamond_dotted(),
+            crate::glyphs::diamond_hollow(),
+        )
+    }
 
     /// `layout` tells the function how many bar rows to slice (5 for
     /// WIDE, 10 for NARROW); without it the slice would be wrong for
@@ -895,6 +898,7 @@ mod tests {
         lines: &[Line<'static>],
         layout: BarLayout,
     ) -> (usize, usize, usize, usize) {
+        let (filled, dotted, hollow) = bar_cell_glyphs();
         let mut diamonds = 0usize;
         let mut tools = 0usize;
         let mut free = 0usize;
@@ -903,12 +907,11 @@ mod tests {
         for line in &lines[bar_start..bar_end] {
             for span in &line.spans {
                 let c = span.content.as_ref();
-                if c == SYSTEM_GLYPH_TEST || c == MESSAGES_GLYPH_TEST {
-                    // SYSTEM_GLYPH_TEST == MESSAGES_GLYPH_TEST; counted together.
+                if c == filled {
                     diamonds += 1;
-                } else if c == TOOLS_GLYPH_TEST {
+                } else if c == dotted {
                     tools += 1;
-                } else if c == FREE_GLYPH_TEST {
+                } else if c == hollow {
                     free += 1;
                 }
             }
@@ -1074,8 +1077,9 @@ mod tests {
 
         // Token, percent, and count columns line up across all rows;
         // single-digit counts are right-aligned ("·  4 servers").
+        let (filled, dotted, hollow) = bar_cell_glyphs();
         let is_row = |l: &&str| {
-            (l.starts_with('\u{25C6}') || l.starts_with('\u{25C8}') || l.starts_with('\u{25C7}'))
+            (l.starts_with(filled) || l.starts_with(dotted) || l.starts_with(hollow))
                 && l.contains(" tokens ")
         };
         let cols = |needle: &str| -> Vec<usize> {
@@ -1199,10 +1203,8 @@ mod tests {
                 .iter()
                 .filter(|s| {
                     let c = s.content.as_ref();
-                    c == SYSTEM_GLYPH_TEST
-                        || c == TOOLS_GLYPH_TEST
-                        || c == MESSAGES_GLYPH_TEST
-                        || c == FREE_GLYPH_TEST
+                    let (filled, dotted, hollow) = bar_cell_glyphs();
+                    c == filled || c == dotted || c == hollow
                 })
                 .count();
             assert!(
@@ -1224,10 +1226,8 @@ mod tests {
                 .iter()
                 .filter(|s| {
                     let c = s.content.as_ref();
-                    c == SYSTEM_GLYPH_TEST
-                        || c == TOOLS_GLYPH_TEST
-                        || c == MESSAGES_GLYPH_TEST
-                        || c == FREE_GLYPH_TEST
+                    let (filled, dotted, hollow) = bar_cell_glyphs();
+                    c == filled || c == dotted || c == hollow
                 })
                 .count();
             assert!(

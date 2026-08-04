@@ -27,25 +27,32 @@
 //!   first, and a conflicted criterion stays open with its conflict recorded
 //!   instead of being counted as delivered.
 //!
-//! Fan-out is off by default (`[goal] fanout_max = 1`). It also declines to run
-//! when it cannot land the work — no git repo, or subagent worktree snapshotting
-//! enabled (which deletes the worktree the merge would read). Declining means
-//! the goal runs serially, which is correct and slower; the alternative would be
-//! work that silently never reaches the repo.
+//! Fan-out is on by default (`[goal] fanout_max = 3`). Set `fanout_max = 1` (or
+//! `GROK_GOAL_FANOUT_MAX=1`) to force a single implementer. It also declines to
+//! run when it cannot land the work — no git repo, or subagent worktree
+//! snapshotting enabled (which deletes the worktree the merge would read).
+//! Declining means the goal runs serially, which is correct and slower; the
+//! alternative would be work that silently never reaches the repo.
 
 use std::path::{Path, PathBuf};
 
 use crate::session::goal_tracker::CriterionView;
 
-/// Default `[goal] fanout_max`: fan-out disabled.
-pub(crate) const GOAL_FANOUT_MAX_DEFAULT: u32 = 1;
+/// Default `[goal] fanout_max`: up to three concurrent criterion workers.
+pub(crate) const GOAL_FANOUT_MAX_DEFAULT: u32 = 3;
 
 /// Hard ceiling on concurrent criterion workers.
 ///
 /// Each worker is a full session with its own model context and worktree, so
 /// the cost is linear and the disk cost is paid up front. Past a handful the
 /// wave is bounded by the merge and the review of it, not by the models.
-pub(crate) const GOAL_FANOUT_MAX_CEILING: u32 = 8;
+///
+/// Five, matching the skeptic panel's ceiling: a worker is strictly heavier
+/// than a skeptic (it also holds a worktree and writes code) and both saturate
+/// the same subagent coordinator. It is also the most a wave can ever use — the
+/// planner is told to keep the criteria set to 3-5 total, and a wave is capped
+/// by the criteria that are ready at once, never by this number.
+pub(crate) const GOAL_FANOUT_MAX_CEILING: u32 = 5;
 
 /// Fewest ready criteria worth fanning out.
 ///
@@ -549,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn fanout_is_off_unless_configured() {
+    fn fanout_is_off_when_cap_is_one() {
         let criteria = vec![view(1, false, vec![]), view(2, false, vec![])];
         assert_eq!(
             plan_wave(&criteria, 1, true, false),
@@ -990,7 +997,7 @@ mod tests {
             "git worktree add failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        dest.canonicalize().unwrap()
+        dunce::canonicalize(&dest).unwrap()
     }
 
     fn worker_at(criterion: u32, worktree: PathBuf) -> WorkerOutcome {

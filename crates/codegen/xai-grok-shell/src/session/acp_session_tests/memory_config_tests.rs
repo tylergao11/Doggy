@@ -20,7 +20,7 @@ fn initial_injection_backend_params_use_override_min_score() {
         search_source: "tool",
         embedding_credentials: crate::session::memory::EndpointScopedCredentials::none(),
         curated_char_limit: crate::config::DEFAULT_CURATED_CHAR_LIMIT,
-        };
+    };
     let initial_injection = crate::config::MemoryInitialInjectionConfig {
         enabled: true,
         min_score: Some(0.72),
@@ -49,7 +49,7 @@ fn initial_injection_backend_params_preserve_default_zero_min_score() {
         search_source: "tool",
         embedding_credentials: crate::session::memory::EndpointScopedCredentials::none(),
         curated_char_limit: crate::config::DEFAULT_CURATED_CHAR_LIMIT,
-        };
+    };
     let (adjusted, effective_min_score) = build_initial_injection_backend_params(
         &params,
         &crate::config::MemoryInitialInjectionConfig::default(),
@@ -301,7 +301,7 @@ async fn create_test_actor_with_memory(
         subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
         workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
         trace_config_template: std::cell::RefCell::new(None),
-        }
+    }
 }
 #[tokio::test(flavor = "current_thread")]
 async fn test_is_flushing_suppresses_auto_compact() {
@@ -529,7 +529,7 @@ async fn create_injection_ready_actor(
         search_source: "tool",
         embedding_credentials: crate::session::memory::EndpointScopedCredentials::none(),
         curated_char_limit: crate::config::DEFAULT_CURATED_CHAR_LIMIT,
-        });
+    });
     actor
         .chat_state_handle
         .replace_conversation(initial_conversation);

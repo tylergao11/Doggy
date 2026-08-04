@@ -1175,7 +1175,8 @@ mod tests {
         )
         .unwrap();
         // Session directory paths use urlencoding::encode(&cwd)
-        let encoded_overlay = urlencoding::encode("/root/.Doggy/worktrees/project/ab-123-a-overlay");
+        let encoded_overlay =
+            urlencoding::encode("/root/.Doggy/worktrees/project/ab-123-a-overlay");
         let input = format!(
             "output-file: /root/.Doggy/sessions/{}/session-id/terminal/call.log",
             encoded_overlay

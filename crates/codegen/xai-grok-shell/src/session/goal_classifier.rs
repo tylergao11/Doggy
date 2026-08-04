@@ -1242,13 +1242,12 @@ fn build_gaps_findings(
     refuters_by_confidence(results)
         .into_iter()
         .flat_map(|r| {
-            r.findings
-                .iter()
-                .take(GAPS_MAX_FINDINGS)
-                .map(|f| crate::session::goal_tracker::ClassifierFinding {
+            r.findings.iter().take(GAPS_MAX_FINDINGS).map(|f| {
+                crate::session::goal_tracker::ClassifierFinding {
                     criterion: f.criterion,
                     message: render_finding(f),
-                })
+                }
+            })
         })
         .collect()
 }
@@ -2876,11 +2875,13 @@ mod tests {
 
     #[test]
     fn skeptics_never_fork_the_implementers_context() {
-        assert!(
-            !super::SKEPTIC_FORK_CONTEXT,
-            "a forked skeptic audits the implementer's own reasoning: independence dies \
-             silently, the verdicts still look plausible, and no other test goes red"
-        );
+        const {
+            assert!(
+                !super::SKEPTIC_FORK_CONTEXT,
+                "a forked skeptic audits the implementer's own reasoning: independence dies \
+                 silently, the verdicts still look plausible, and no other test goes red"
+            );
+        }
     }
 
     #[test]
@@ -3986,7 +3987,9 @@ mod tests {
             );
         }
         assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("You judge content vs the contract"));
-        assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("You do not grade the implementer's self-tests"));
+        assert!(
+            GOAL_VERIFIER_PROMPT_TEMPLATE.contains("You do not grade the implementer's self-tests")
+        );
         assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("out of scope"));
         assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("CHANGED_FILES"));
         assert!(GOAL_VERIFIER_PROMPT_TEMPLATE.contains("current workspace"));
@@ -6164,12 +6167,11 @@ mod tests {
 
     #[test]
     #[serial]
-    fn resolve_goal_fanout_max_defaults_to_serial() {
+    fn resolve_goal_fanout_max_defaults_to_three() {
         unsafe { std::env::remove_var("GROK_GOAL_FANOUT_MAX") };
-        // Literal 1, not the const: parallel criterion workers cost a session
-        // and a worktree each, so a regression that turns them on by default
-        // must fail here rather than surprise every existing deployment.
-        assert_eq!(cfg_fanout(None).resolve_goal_fanout_max().value, 1);
+        // Literal 3, not the const: a regression that re-serializes the default
+        // must fail here — product expects concurrent criterion workers on.
+        assert_eq!(cfg_fanout(None).resolve_goal_fanout_max().value, 3);
     }
 
     #[test]
@@ -6195,7 +6197,7 @@ mod tests {
         unsafe { std::env::set_var("GROK_GOAL_FANOUT_MAX", "garbage") };
         assert_eq!(
             cfg_fanout(None).resolve_goal_fanout_max().value,
-            1,
+            3,
             "invalid env falls through to the default"
         );
         unsafe { std::env::remove_var("GROK_GOAL_FANOUT_MAX") };

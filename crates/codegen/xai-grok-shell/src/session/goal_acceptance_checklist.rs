@@ -211,9 +211,8 @@ pub(crate) fn set_exec_marks_for_criteria(
     }
     crate::session::goal_plan_write::with_plan_lock(path, || {
         let body = std::fs::read_to_string(path)?;
-        let updated = rewrite_marks_where(&body, Column::Exec, checked, |row| {
-            criteria.contains(&row)
-        });
+        let updated =
+            rewrite_marks_where(&body, Column::Exec, checked, |row| criteria.contains(&row));
         if updated != body {
             std::fs::write(path, updated)?;
         }
@@ -329,17 +328,14 @@ pub(crate) fn extract_numbered_acceptance_criteria(body: &str) -> Vec<String> {
         }
         let t = line.trim();
         // `1. text` or `1) text`
-        let rest = t
-            .find('.')
-            .or_else(|| t.find(')'))
-            .and_then(|i| {
-                let (num, rest) = t.split_at(i);
-                if num.chars().all(|c| c.is_ascii_digit()) && !num.is_empty() {
-                    Some(rest[1..].trim())
-                } else {
-                    None
-                }
-            });
+        let rest = t.find('.').or_else(|| t.find(')')).and_then(|i| {
+            let (num, rest) = t.split_at(i);
+            if num.chars().all(|c| c.is_ascii_digit()) && !num.is_empty() {
+                Some(rest[1..].trim())
+            } else {
+                None
+            }
+        });
         if let Some(text) = rest
             && !text.is_empty()
         {
@@ -523,8 +519,7 @@ mod tests {
         std::fs::write(&path, SAMPLE).unwrap();
         let err = require_exec_complete(&path).unwrap_err();
         assert!(err.contains("Execution column incomplete"));
-        let done = SAMPLE
-            .replace("| [ ] | [ ] | first", "| [x] | [ ] | first");
+        let done = SAMPLE.replace("| [ ] | [ ] | first", "| [x] | [ ] | first");
         std::fs::write(&path, done).unwrap();
         assert!(require_exec_complete(&path).is_ok());
     }

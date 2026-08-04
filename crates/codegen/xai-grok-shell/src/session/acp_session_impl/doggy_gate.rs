@@ -183,11 +183,7 @@ impl SessionActor {
     /// Sole path that marks the goal Complete after orchestrator TaskDone.
     async fn doggy_mark_task_done(&self) {
         let sid = self.session_info.id.0.as_ref();
-        xai_grok_telemetry::unified_log::info(
-            "doggy.mark_done.enter",
-            Some(sid),
-            None,
-        );
+        xai_grok_telemetry::unified_log::info("doggy.mark_done.enter", Some(sid), None);
         let current_tokens = self.chat_state_handle.get_total_tokens().await as i64;
         let (tokens_used, finished_marginal) = self.goal_tokens(current_tokens);
         // IMPORTANT: prune BEFORE taking `goal_tracker` for `complete()`.
@@ -271,11 +267,7 @@ impl SessionActor {
             let Some(o) = tracker.snapshot() else {
                 return;
             };
-            crate::session::goal_orchestrator::build_goal_updated(
-                o,
-                tokens_used,
-                finished_marginal,
-            )
+            crate::session::goal_orchestrator::build_goal_updated(o, tokens_used, finished_marginal)
         };
         if let SessionUpdate::GoalUpdated {
             ref mut completion_phase,
@@ -299,10 +291,7 @@ impl SessionActor {
     /// Done / Pause and perform host side effects.
     ///
     /// **Sole production completion authority** for bound tasks.
-    pub(crate) async fn run_doggy_round_end(
-        &self,
-        machine: &mut TaskMachine,
-    ) -> DoggyRoundAction {
+    pub(crate) async fn run_doggy_round_end(&self, machine: &mut TaskMachine) -> DoggyRoundAction {
         // Process deferred completed:true / progress before deciding so the
         // classifier verdict is available as VerificationOutcome.
         self.doggy_drain_goal_updates().await;

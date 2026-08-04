@@ -37,8 +37,8 @@ pub struct GoalCriterionInfo {
     pub audit: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<u32>,
-    /// 0-based parallel wave; `None` when the run is serial because the
-    /// dependency table could not be scheduled.
+    /// 0-based parallel wave; `None` when no wave has more than one member
+    /// (fully serial — missing/broken table or a declared chain with no fan-out).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wave: Option<u32>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -389,6 +389,10 @@ pub struct HookRunEntryDto {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "sessionUpdate")]
+// `GoalUpdated` is a fat status dump by design (criteria graph + live token
+// counters); boxing one field would shrink the discriminant gap without
+// shrinking the payload that actually crosses the wire.
+#[allow(clippy::large_enum_variant)]
 pub enum SessionUpdate {
     /// A diff review request containing one or more file diffs for user review.
     DiffReview {

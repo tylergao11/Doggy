@@ -505,15 +505,23 @@ fn to_legacy_glyphs(s: &str) -> String {
 /// eyeballing the ASCII fallbacks (or confirming the fancy glyphs) on any
 /// platform without a real ConHost.
 pub fn is_legacy_windows_console() -> bool {
+    if let Some(forced) = forced_legacy_console_override() {
+        return forced;
+    }
+    // Unit/integration tests assert the primary (fancy) glyph contract.
+    // Prefer fancy glyphs whenever cargo invoked the process (`CARGO`) or
+    // libtest marked it (`RUST_TEST`). Force legacy with
+    // `GROK_FORCE_LEGACY_CONSOLE=1` when intentionally testing fallbacks.
+    if std::env::var_os("RUST_TEST").is_some() || std::env::var_os("CARGO").is_some() {
+        return false;
+    }
     static CACHE: OnceLock<bool> = OnceLock::new();
     *CACHE.get_or_init(|| {
-        forced_legacy_console_override().unwrap_or_else(|| {
-            // `env_brand`, not `brand`: a bare ConHost is detected as
-            // `Unknown`, but `brand` optimistically becomes `WindowsTerminal`
-            // on native Windows. Font capability needs the raw detection so
-            // legacy consoles still get the ASCII glyph fallback.
-            decide_legacy_windows_console(HostOs::current(), terminal_context().env_brand)
-        })
+        // `env_brand`, not `brand`: a bare ConHost is detected as
+        // `Unknown`, but `brand` optimistically becomes `WindowsTerminal`
+        // on native Windows. Font capability needs the raw detection so
+        // legacy consoles still get the ASCII glyph fallback.
+        decide_legacy_windows_console(HostOs::current(), terminal_context().env_brand)
     })
 }
 

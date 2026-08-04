@@ -2301,17 +2301,22 @@ mod tests {
                         .unwrap_or_default()
                 })
                 .collect();
-            if let Some(x) = row.iter().position(|s| s == "\u{2717}") {
+            if let Some(x) = row.iter().position(|s| s == crate::glyphs::ballot_x()) {
                 found = true;
                 for cell in &row[x + 2..] {
                     assert!(
                         cell.trim().is_empty(),
-                        "non-blank cell after `[✗]` on loop row: {row:?}",
+                        "non-blank cell after `[{}]` on loop row: {row:?}",
+                        crate::glyphs::ballot_x(),
                     );
                 }
             }
         }
-        assert!(found, "expected a `✗` kill button on the loop row");
+        assert!(
+            found,
+            "expected a `{}` kill button on the loop row",
+            crate::glyphs::ballot_x()
+        );
     }
 
     #[test]

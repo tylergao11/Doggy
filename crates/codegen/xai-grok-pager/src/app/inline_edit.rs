@@ -260,7 +260,11 @@ impl AgentView {
 
         // Keep top/bottom vpad empty so the editor matches the unedited
         // prompt chrome instead of painting from row 0 of a padded rect.
-        let vpad_top = if self.inline_edit_vpad_rows() > 0 { 1u16 } else { 0 };
+        let vpad_top = if self.inline_edit_vpad_rows() > 0 {
+            1u16
+        } else {
+            0
+        };
         let content_y = rect.y.saturating_add(vpad_top);
         let content_h = rect
             .height

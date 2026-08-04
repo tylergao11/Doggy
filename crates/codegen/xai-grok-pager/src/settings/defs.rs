@@ -86,13 +86,11 @@ const THEME_CHOICES: &[EnumChoice] = &[
 // ---------------------------------------------------------------------------
 
 // Doggy: only Auto (full tool auto-run). Goal is a separate session form.
-const PERMISSION_MODE_CHOICES: &[EnumChoice] = &[
-    EnumChoice {
-        canonical: "auto",
-        display: "Auto",
-        description: "Tools auto-run without permission prompts (default full permission). Shift+Tab cycles Auto ↔ Goal.",
-    },
-];
+const PERMISSION_MODE_CHOICES: &[EnumChoice] = &[EnumChoice {
+    canonical: "auto",
+    display: "Auto",
+    description: "Tools auto-run without permission prompts (default full permission). Shift+Tab cycles Auto ↔ Goal.",
+}];
 
 // ---------------------------------------------------------------------------
 // Coding-data-sharing catalog.
@@ -1182,9 +1180,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
             owner: SettingOwner::Pager,
             label: "Plan mode (removed)",
             description: "Plan mode has been removed. Use Goal (Shift+Tab or /goal) for acceptance-criteria driven work.",
-            keywords: &[
-                "plan", "mode", "removed", "goal", "session",
-            ],
+            keywords: &["plan", "mode", "removed", "goal", "session"],
             kind: SettingKind::Enum {
                 default: "off",
                 choices: PLAN_MODE_CHOICES,

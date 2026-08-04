@@ -673,7 +673,7 @@ mod tests {
         }
         {
             let _on = xai_grok_test_support::EnvGuard::set("GROK_SESSION_LIST_CONVERSATIONS", "1");
-            assert_eq!(conversations_lane_enabled(), false);
+            assert!(!conversations_lane_enabled());
         }
         {
             let _off = xai_grok_test_support::EnvGuard::set("GROK_SESSION_LIST_CONVERSATIONS", "0");
@@ -696,15 +696,13 @@ mod tests {
         {
             let _desktop =
                 xai_grok_test_support::EnvGuard::set("GROK_SESSION_LIST_CONVERSATIONS", "1");
-            assert_eq!(conversations_lane_active(), false);
+            assert!(!conversations_lane_active());
         }
         {
             let _chat = xai_grok_test_support::EnvGuard::set(GROK_CHAT_MODE_ENV, "1");
-            assert_eq!(
-                conversations_lane_active(),
-                false,
-                "process chat mode must enable the lane (chat feature only)"
-            );
+            // Hard-off in this build: `process_chat_mode_enabled` is stubbed
+            // to false, so the env alone cannot open the lane.
+            assert!(!conversations_lane_active());
         }
     }
     /// `parse_list_req` forces the conversations-only `kind` exactly when

@@ -939,7 +939,9 @@ mod tests {
         assert!(!is_markdown_file_path(Path::new("/src/lib.rs")));
         assert!(!is_markdown_file_path(Path::new("/no-extension")));
         assert!(!is_markdown_file_path(Path::new("/src/notmd.rs")));
-        assert!(!is_markdown_file_path(Path::new("浼佷笟AI鍐崇瓥娓呭崟.html")));
+        assert!(!is_markdown_file_path(Path::new(
+            "浼佷笟AI鍐崇瓥娓呭崟.html"
+        )));
         assert!(is_markdown_file_path(Path::new("浼佷笟AI鍐崇瓥娓呭崟.md")));
         assert!(is_markdown_file_path(Path::new("璁″垝.markdown")));
         assert!(!is_markdown_file_path(Path::new("md")));
@@ -1045,7 +1047,9 @@ mod tests {
         assert!(t.has_pending_exit_reminder());
         // tool entry no-ops; clear via enter_pending instead
         assert!(!t.activate_from_tool());
-        assert!(t.enter_pending() || !t.has_pending_exit_reminder() || t.has_pending_exit_reminder());
+        assert!(
+            t.enter_pending() || !t.has_pending_exit_reminder() || t.has_pending_exit_reminder()
+        );
         // enter_pending from Inactive after exit idle is Inactive with reminder
         let mut t2 = test_tracker();
         t2.enter_pending();

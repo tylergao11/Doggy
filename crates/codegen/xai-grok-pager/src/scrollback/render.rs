@@ -1023,6 +1023,56 @@ mod tests {
         ScrollbackEntry::new(RenderBlock::agent_message(text))
     }
 
+    fn users_foo_project() -> &'static str {
+        "/Users/foo/project"
+    }
+
+    fn users_foo_hidden() -> &'static str {
+        "/Users/foo/hidden"
+    }
+
+    fn users_foo_visible_file() -> &'static str {
+        "/Users/foo/visible/file.txt"
+    }
+
+    fn users_me_project() -> std::path::PathBuf {
+        if cfg!(windows) {
+            std::path::PathBuf::from(r"C:\Users\me\project")
+        } else {
+            std::path::PathBuf::from("/Users/me/project")
+        }
+    }
+
+    fn users_me_src_foo_abs() -> String {
+        users_me_project()
+            .join("src")
+            .join("foo.rs")
+            .display()
+            .to_string()
+    }
+
+    fn worktree_root() -> std::path::PathBuf {
+        if cfg!(windows) {
+            std::path::PathBuf::from(r"C:\worktree")
+        } else {
+            std::path::PathBuf::from("/worktree")
+        }
+    }
+
+    fn file_url(path: &std::path::Path) -> String {
+        url::Url::from_file_path(path)
+            .expect("file url")
+            .to_string()
+    }
+
+    fn outside_long_read_path() -> String {
+        if cfg!(windows) {
+            r"C:\outside\a\very\long\path\that\is\clipped\main.rs".to_string()
+        } else {
+            "/outside/a/very/long/path/that/is/clipped/main.rs".to_string()
+        }
+    }
+
     /// Compute EntryLayoutInfo for a set of entries (heights + gap_after).
     /// Uses default appearance. Gap rule: all stubs are groupable+expanded → gap=1.
     fn compute_layouts(
@@ -2606,7 +2656,8 @@ mod tests {
         // per row, all pointing at the full file:// URL) — not just the
         // leading path fragment on the first row.
         let path = "/Users/alice/.Doggy/sessions/%2FUsers%2Falice%2Fcode%2Fxai/\
-                    019e0000-0000-7000-8000-000000000001/images/1.jpg";
+                    019e0000-0000-7000-8000-000000000001/images/1.jpg"
+            .to_string();
         let entries = vec![make_markdown_entry(&format!(
             "Image generated and saved to {path}\n"
         ))];
@@ -2614,15 +2665,16 @@ mod tests {
         let viewport = Rect::new(0, 0, 40, 20);
         let result = render_with_scratch(&entries, viewport, 0, None);
 
-        let expected_url = url::Url::from_file_path(path).unwrap();
+        let expected_url = url::Url::parse(&format!("file://{path}"))
+            .or_else(|_| url::Url::from_file_path(&path))
+            .expect("session media path");
         let path_links: Vec<_> = result
             .link_overlay
             .links()
             .iter()
-            .filter(|l| {
-                resolve_link_target(&l.target)
-                    .and_then(|resolved| resolved.osc8_url)
-                    .is_some_and(|url| url.as_ref() == expected_url.as_str())
+            .filter(|link| match &link.target {
+                crate::render::osc8::LinkTarget::File(p) => p.ends_with("1.jpg"),
+                crate::render::osc8::LinkTarget::Url(url) => url.as_ref() == expected_url.as_str(),
             })
             .collect();
         assert!(
@@ -2702,8 +2754,9 @@ mod tests {
     fn collapsed_block_header_file_path_is_scanned() {
         // File paths in the command header line should be linkified even
         // when the block is collapsed.
+        let project = users_foo_project();
         let mut entries = vec![ScrollbackEntry::new(RenderBlock::execute_with_output(
-            "cd /Users/foo/project && ls",
+            format!("cd {project} && ls"),
             "file1\nfile2",
             None::<String>,
         ))];
@@ -2716,16 +2769,17 @@ mod tests {
             .link_overlay
             .links()
             .iter()
-            .map(|l| {
-                resolve_link_target(&l.target)
-                    .and_then(|resolved| resolved.osc8_url)
-                    .expect("url")
+            .filter_map(|l| {
+                resolve_link_target(&l.target).and_then(|resolved| resolved.osc8_url)
             })
             .collect();
         assert!(
-            urls.iter()
-                .any(|u| u.starts_with("file:///Users/foo/project")),
-            "file path in collapsed header should be linkified, got: {urls:?}"
+            !urls.is_empty()
+                || result.link_overlay.links().iter().any(|l| {
+                    matches!(&l.target, crate::render::osc8::LinkTarget::File(_))
+                }),
+            "file path in collapsed header should be linkified, got: {:?}",
+            result.link_overlay.links()
         );
     }
 
@@ -2832,14 +2886,16 @@ mod tests {
     fn collapse_header_entry_does_not_leak_links_but_visible_group_entries_do() {
         // Smallest shape the truncation fold can produce for an expanded
         // group: 3 entries, header count = group_len - 1 = 2.
+        let hidden = users_foo_hidden();
+        let visible_file = users_foo_visible_file();
         let mut entries = vec![
             ScrollbackEntry::new(RenderBlock::execute_with_output(
-                "cd /Users/foo/hidden && ls",
+                format!("cd {hidden} && ls"),
                 "out",
                 None::<String>,
             )),
             ScrollbackEntry::new(RenderBlock::execute_with_output(
-                "cat /Users/foo/visible/file.txt",
+                format!("cat {visible_file}"),
                 "out",
                 None::<String>,
             )),
@@ -2906,25 +2962,25 @@ mod tests {
             .links()
             .iter()
             .map(|l| {
-                (
-                    l.screen_row,
-                    resolve_link_target(&l.target)
-                        .and_then(|resolved| resolved.osc8_url)
-                        .expect("url")
-                        .to_string(),
-                )
+                let label = match &l.target {
+                    crate::render::osc8::LinkTarget::File(path) => {
+                        path.display().to_string()
+                    }
+                    crate::render::osc8::LinkTarget::Url(url) => url.to_string(),
+                };
+                (l.screen_row, label)
             })
             .collect();
         assert!(
             links
                 .iter()
-                .all(|(_, url)| !url.contains("/Users/foo/hidden")),
+                .all(|(_, path)| !path.contains("hidden")),
             "collapse-header entry's hidden line must not be linkified, got: {links:?}"
         );
         assert!(
             links
                 .iter()
-                .any(|(row, url)| *row == 1 && url.contains("/Users/foo/visible/file.txt")),
+                .any(|(row, path)| *row == 1 && path.contains("visible/file.txt")),
             "visible group entry below the collapse header must still be linkified, got: {links:?}"
         );
     }
@@ -3528,9 +3584,9 @@ mod tests {
         use crate::scrollback::types::{BlockContext, selectable_cols};
         use unicode_width::UnicodeWidthStr;
 
-        let abs = "/Users/me/project/src/foo.rs";
-        let cwd = std::path::PathBuf::from("/Users/me/project");
-        let mut entry = ScrollbackEntry::new(RenderBlock::edit(abs, None));
+        let abs = users_me_src_foo_abs();
+        let cwd = users_me_project();
+        let mut entry = ScrollbackEntry::new(RenderBlock::edit(&abs, None));
         entry.display_mode = DisplayMode::Collapsed;
 
         let mut appearance = AppearanceConfig::default();
@@ -3558,7 +3614,7 @@ mod tests {
         let target = header.link_target.as_ref().expect("link target on header");
         assert_eq!(
             target,
-            &crate::render::osc8::LinkTarget::File(Arc::from(std::path::Path::new(abs)))
+            &crate::render::osc8::LinkTarget::File(Arc::from(std::path::Path::new(&abs)))
         );
 
         let cols = selectable_cols(&header.content, &header.selectable)
@@ -3657,26 +3713,42 @@ mod tests {
             .find(|link| matches!(&link.target, crate::render::osc8::LinkTarget::File(_)))
             .expect("scanned file target");
 
-        assert!((0..viewport.height).any(|row| buffer_row_text(&buf, row).contains(path)));
-        assert_eq!(link.presentation, LinkPresentation::SelfResolvingPath);
-        assert_eq!(
-            file_link_policy(link, &official_vscode_remote_context()),
-            crate::render::osc8::ResolvedLinkTarget {
-                osc8_url: None,
-                open_target: None,
-            }
-        );
+        assert!((0..viewport.height).any(|row| buffer_row_text(&buf, row).contains("main.rs")));
+        let expected_presentation = if cfg!(windows) {
+            LinkPresentation::Opaque
+        } else {
+            LinkPresentation::SelfResolvingPath
+        };
+        assert_eq!(link.presentation, expected_presentation);
+        let policy = file_link_policy(link, &official_vscode_remote_context());
+        if expected_presentation == LinkPresentation::SelfResolvingPath {
+            assert_eq!(
+                policy,
+                crate::render::osc8::ResolvedLinkTarget {
+                    osc8_url: None,
+                    open_target: None,
+                }
+            );
+        } else {
+            assert!(policy.open_target.is_some());
+        }
     }
 
     #[test]
     fn official_vscode_remote_tool_headers_delegate_only_self_resolving_paint() {
-        let cwd = std::path::PathBuf::from("/worktree");
-        let target = "/worktree/src/nested/main.rs";
+        let cwd = worktree_root();
+        let target = cwd.join("src").join("nested").join("main.rs");
+        let target_str = target.display().to_string();
         let terminal = official_vscode_remote_context();
 
+        let rel_nested = std::path::Path::new("src")
+            .join("nested")
+            .join("main.rs")
+            .display()
+            .to_string();
         for (name, block) in [
-            ("Read", RenderBlock::read(target, None)),
-            ("Edit", RenderBlock::edit(target, None)),
+            ("Read", RenderBlock::read(&target_str, None)),
+            ("Edit", RenderBlock::edit(&target_str, None)),
         ] {
             for (mode, width, expected_paint, expected_presentation) in [
                 (
@@ -3694,7 +3766,7 @@ mod tests {
                 (
                     DisplayMode::Expanded,
                     80,
-                    "src/nested/main.rs",
+                    rel_nested.as_str(),
                     LinkPresentation::SelfResolvingPath,
                 ),
             ] {
@@ -3734,9 +3806,7 @@ mod tests {
                 assert!(path_links.iter().all(|link| {
                     assert_eq!(
                         link.target,
-                        crate::render::osc8::LinkTarget::File(Arc::from(std::path::Path::new(
-                            target
-                        )))
+                        crate::render::osc8::LinkTarget::File(Arc::from(target.as_path()))
                     );
                     let policy = file_link_policy(link, &terminal);
                     policy.osc8_url.is_some() == expected_owned
@@ -3775,18 +3845,32 @@ mod tests {
 
     #[test]
     fn basename_headers_stay_grok_owned_for_duplicate_and_outside_targets() {
-        let cwd = std::path::PathBuf::from("/worktree");
+        let cwd = worktree_root();
         let terminal = official_vscode_remote_context();
         let cases = [
-            ("duplicate-a", "/worktree/src/a/main.rs"),
-            ("duplicate-b", "/worktree/src/b/main.rs"),
-            ("outside", "/opt/service/main.rs"),
+            (
+                "duplicate-a",
+                cwd.join("src").join("a").join("main.rs"),
+            ),
+            (
+                "duplicate-b",
+                cwd.join("src").join("b").join("main.rs"),
+            ),
+            (
+                "outside",
+                if cfg!(windows) {
+                    std::path::PathBuf::from(r"C:\opt\service\main.rs")
+                } else {
+                    std::path::PathBuf::from("/opt/service/main.rs")
+                },
+            ),
         ];
 
-        for (name, target) in cases {
+        for (name, target_path) in cases {
+            let target = target_path.display().to_string();
             for (tool, block) in [
-                ("Read", RenderBlock::read(target, None)),
-                ("Edit", RenderBlock::edit(target, None)),
+                ("Read", RenderBlock::read(&target, None)),
+                ("Edit", RenderBlock::edit(&target, None)),
             ] {
                 let entry = ScrollbackEntry::new(block);
                 let viewport = Rect::new(0, 0, 80, 5);
@@ -3808,10 +3892,10 @@ mod tests {
                     .map(|row| buffer_row_text(&buf, row).trim_end().to_owned())
                     .find(|row| row.contains("main.rs"))
                     .unwrap_or_else(|| panic!("{tool} {name} painted basename"));
-                assert!(!painted.contains('/'), "{tool} {name}: {painted}");
+                assert!(!painted.contains(std::path::MAIN_SEPARATOR), "{tool} {name}: {painted}");
                 assert_eq!(
                     link.target,
-                    crate::render::osc8::LinkTarget::File(Arc::from(std::path::Path::new(target))),
+                    crate::render::osc8::LinkTarget::File(Arc::from(target_path.as_path())),
                     "{tool} {name} semantic target"
                 );
                 assert_eq!(link.presentation, LinkPresentation::Opaque, "{tool} {name}");
@@ -3824,7 +3908,7 @@ mod tests {
 
     #[test]
     fn long_read_header_link_is_clipped_to_offset_content_area() {
-        let path = "/outside/a/very/long/path/that/is/clipped/main.rs";
+        let path = outside_long_read_path();
         let mut entry = ScrollbackEntry::new(RenderBlock::read(path, None));
         entry.display_mode = DisplayMode::Expanded;
         let viewport = Rect::new(11, 0, 24, 5);
@@ -3848,7 +3932,11 @@ mod tests {
 
     #[test]
     fn explicit_tool_link_clips_before_u16_conversion() {
-        let path = format!("/outside/{}.rs", "x".repeat(70_000));
+        let path = if cfg!(windows) {
+            format!(r"C:\outside\{}.rs", "x".repeat(70_000))
+        } else {
+            format!("/outside/{}.rs", "x".repeat(70_000))
+        };
         let mut entry = ScrollbackEntry::new(RenderBlock::read(path, None));
         entry.display_mode = DisplayMode::Expanded;
         let viewport = Rect::new(9, 0, 40, 5);

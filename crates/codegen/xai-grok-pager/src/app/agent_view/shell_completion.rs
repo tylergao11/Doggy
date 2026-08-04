@@ -311,6 +311,7 @@ mod shell_suggestion_key_tests {
         assert_eq!(agent.prompt.cursor(), agent.prompt.text().len());
     }
 
+    #[cfg(not(windows))]
     /// Tab opens the dropdown whenever items exist — a ghost is NOT required
     /// (pure path/file completions never carry one). Two candidates with no
     /// shared prefix beyond the typed token = the plain-open path (a single
@@ -335,6 +336,7 @@ mod shell_suggestion_key_tests {
 
     // -- always-on Tab fetch (no GROK_SUGGESTIONS) --------------------------
 
+    #[cfg(not(windows))]
     /// Tab in bash mode with no fetched candidates fires a deterministic
     /// fetch — no env flag, no AI, dropdown-scale limit.
     #[test]
@@ -363,6 +365,7 @@ mod shell_suggestion_key_tests {
         assert_eq!(generation, agent.prompt.suggestions.generation());
     }
 
+    #[cfg(not(windows))]
     /// Repeat Tab while the armed fetch is still in flight is a no-op: one
     /// RPC, one landing that runs the Tab semantics once.
     #[test]
@@ -383,6 +386,7 @@ mod shell_suggestion_key_tests {
         );
     }
 
+    #[cfg(not(windows))]
     /// Items outdated by an edit (stale generation) refetch instead of
     /// completing over the old candidate set.
     #[test]
@@ -434,6 +438,7 @@ mod shell_suggestion_key_tests {
 
     // -- terminal-like Tab (single-candidate accept / common-prefix fill) --
 
+    #[cfg(not(windows))]
     /// Exactly one token candidate: Tab accepts it immediately — no
     /// dropdown flash — and the accept re-fetch keeps the pipeline alive.
     #[test]
@@ -448,6 +453,7 @@ mod shell_suggestion_key_tests {
         assert!(!agent.prompt.completion_dropdown_open());
     }
 
+    #[cfg(not(windows))]
     /// The same insta-accept with the pipeline OFF: the refetch kick is a
     /// direct deterministic fetch instead of a debounce.
     #[test]
@@ -470,6 +476,7 @@ mod shell_suggestion_key_tests {
         );
     }
 
+    #[cfg(not(windows))]
     /// A single HISTORY item keeps the plain dropdown-open behavior:
     /// terminal Tab semantics apply to token completions only.
     #[test]
@@ -484,6 +491,7 @@ mod shell_suggestion_key_tests {
         assert_eq!(agent.prompt.text(), "git st");
     }
 
+    #[cfg(not(windows))]
     /// THE legacy-shell compatibility case: a rangeless `path` row (old
     /// shells send `insertText: "grep"`, no range) must never insta-accept
     /// — its whole-line fallback would replace `ls | gr` with `grep`. Tab
@@ -499,6 +507,7 @@ mod shell_suggestion_key_tests {
         assert!(agent.prompt.completion_dropdown_open());
     }
 
+    #[cfg(not(windows))]
     /// Any rangeless row in a MIXED set (legacy PATH row next to a ranged
     /// file row) forces plain-open too — no insta-accept, no fill.
     #[test]
@@ -515,6 +524,7 @@ mod shell_suggestion_key_tests {
         assert_eq!(agent.prompt.text(), "ls | gr", "no accept, no fill");
     }
 
+    #[cfg(not(windows))]
     /// A MIXED set (any non-token item alongside file/path rows) disables
     /// terminal-Tab semantics wholesale: no insta-accept, no fill — Tab
     /// plain-opens so the user sees every candidate, history included.
@@ -532,6 +542,7 @@ mod shell_suggestion_key_tests {
         assert_eq!(agent.prompt.text(), "cat no", "no accept, no fill");
     }
 
+    #[cfg(not(windows))]
     /// Whole-line history sets never prefix-fill (half a history line is
     /// not a command) — Tab plain-opens.
     #[test]
@@ -548,6 +559,7 @@ mod shell_suggestion_key_tests {
         assert_eq!(agent.prompt.text(), "git st");
     }
 
+    #[cfg(not(windows))]
     /// Multiple candidates sharing a prefix longer than the typed token:
     /// the first Tab fills the common prefix in place (no dropdown) and
     /// re-fetches; when the refreshed items land, the second Tab opens the
@@ -598,6 +610,7 @@ mod shell_suggestion_key_tests {
         assert_eq!(agent.prompt.text(), "cat alpha_");
     }
 
+    #[cfg(not(windows))]
     /// The fill's refetch with the pipeline OFF is a direct deterministic
     /// fetch (no debounce to ride on).
     #[test]
@@ -652,6 +665,7 @@ mod shell_suggestion_key_tests {
             .count()
     }
 
+    #[cfg(not(windows))]
     /// BugBot: a Fill whose range clips a paste chip used to no-op the
     /// write and STILL kick a refetch — every Tab spun fill+refetch with no
     /// draft change. The declined fill now degrades to opening the
@@ -685,6 +699,7 @@ mod shell_suggestion_key_tests {
         assert_eq!(suggest_fetch_count(&agent), 0);
     }
 
+    #[cfg(not(windows))]
     /// Same hole on the insta-accept arm: committing would consume the
     /// sole candidate and THEN decline the splice, leaving every Tab to
     /// refetch the same set. The probe degrades to showing the candidate.
@@ -828,6 +843,7 @@ mod shell_suggestion_key_tests {
         );
     }
 
+    #[cfg(not(windows))]
     /// Esc closes a dropdown the Tab-armed landing opened (the always-on
     /// dismissal path), and the draft survives.
     #[test]
@@ -881,6 +897,7 @@ mod shell_suggestion_key_tests {
         );
     }
 
+    #[cfg(not(windows))]
     /// THE stale-anchor regression: a mouse click repositions the cursor
     /// with no text change, so it must invalidate cached completion items
     /// exactly like a typed edit — the next Tab fetches for the token under

@@ -2425,10 +2425,10 @@ impl Config {
     }
     /// How many criteria may be implemented concurrently.
     ///
-    /// Clamped to `[1, GOAL_FANOUT_MAX_CEILING]`. `1` disables fan-out, which
-    /// is the default: parallel criteria need a repo the harness can create
-    /// worktrees from and a plan whose dependency table is trustworthy, so it
-    /// is opt-in per deployment rather than on for every goal.
+    /// Clamped to `[1, GOAL_FANOUT_MAX_CEILING]`. Default is
+    /// [`GOAL_FANOUT_MAX_DEFAULT`](crate::session::goal_fanout::GOAL_FANOUT_MAX_DEFAULT)
+    /// (`3`). `1` disables fan-out (single implementer). Fan-out still declines
+    /// at runtime without a git repo or when worktrees are disposed after use.
     pub(crate) fn resolve_goal_fanout_max(&self) -> Resolved<u32> {
         use crate::session::goal_fanout::{GOAL_FANOUT_MAX_CEILING, GOAL_FANOUT_MAX_DEFAULT};
         Self::resolve_goal_u32(
@@ -4090,8 +4090,8 @@ pub struct GoalConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reverify_after: Option<u32>,
     /// How many acceptance criteria may be implemented CONCURRENTLY, each by
-    /// its own subagent in its own worktree. `1` (the default) keeps the
-    /// single-implementer behaviour: the goal session does the work itself.
+    /// its own subagent in its own worktree. Default is `3` when unset. Set to
+    /// `1` for single-implementer behaviour (the goal session does the work).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fanout_max: Option<u32>,
     #[serde(

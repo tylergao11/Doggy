@@ -247,7 +247,7 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
         subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
         workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
         trace_config_template: std::cell::RefCell::new(None),
-        };
+    };
     ReplaySendUpdateFixture {
         actor,
         event_rx,

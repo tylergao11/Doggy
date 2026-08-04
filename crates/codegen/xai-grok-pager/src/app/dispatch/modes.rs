@@ -31,15 +31,11 @@ pub(super) fn dispatch_enter_plan_mode(
 ) -> Vec<Effect> {
     let _ = description;
     let ActiveView::Agent(id) = app.active_view else {
-        app.show_toast(
-            "Plan mode is removed. Use Goal (Shift+Tab) or /goal <objective>.",
-        );
+        app.show_toast("Plan mode is removed. Use Goal (Shift+Tab) or /goal <objective>.");
         return vec![];
     };
     if let Some(agent) = app.agents.get_mut(&id) {
-        agent.show_toast(
-            "Plan mode is removed. Use Shift+Tab for Goal or /goal <objective>.",
-        );
+        agent.show_toast("Plan mode is removed. Use Shift+Tab for Goal or /goal <objective>.");
     }
     vec![]
 }
@@ -468,7 +464,9 @@ pub(super) fn active_agent_plan_nudge_state(app: &AppView) -> (bool, bool) {
 }
 
 /// Current resident product posture for Shift+Tab (Auto / Goal).
-fn resident_mode_of(agent: &crate::app::agent_view::AgentView) -> xai_grok_tools::types::SessionMode {
+fn resident_mode_of(
+    agent: &crate::app::agent_view::AgentView,
+) -> xai_grok_tools::types::SessionMode {
     use xai_grok_tools::types::SessionMode;
     // Plan mode is deleted �?never treat legacy plan flags as a cycle stop.
     let in_goal = agent.goal_mode_pending.unwrap_or(agent.goal_mode_active);
@@ -510,8 +508,6 @@ fn apply_resident_mode_flags(
 ///
 /// Plan mode is deleted from the product surface.
 fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
-    use xai_grok_tools::types::SessionMode;
-
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
@@ -561,11 +557,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
     set_yolo_mode_inner(app, !yolo_locked);
     app.current_ui.permission_mode = Some("auto".into());
     refresh_open_settings_modals(app);
-    tracing::info!(
-        from = current.product_label(),
-        to = label,
-        "Mode cycle"
-    );
+    tracing::info!(from = current.product_label(), to = label, "Mode cycle");
 
     let mode_id = next.as_product().as_id();
 

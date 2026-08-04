@@ -455,7 +455,8 @@ pub struct PagerArgs {
     pub debug_file: Option<PathBuf>,
     /// Auto-approve all tool executions.
     #[clap(
-        long = "auto", alias = "always-approve",
+        long = "auto",
+        alias = "always-approve",
         alias = "yolo",
         alias = "dangerously-skip-permissions"
     )]

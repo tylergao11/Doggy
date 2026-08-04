@@ -357,17 +357,6 @@
     }
 
     #[test]
-    fn current_mode_update_plan_activates_plan_mode() {
-        let mut agent = make_agent(Some("s1"));
-        assert!(!agent.plan_mode_active);
-
-        let refresh_needed = detect_plan_mode_change(&make_current_mode_update("plan"), &mut agent);
-        assert!(refresh_needed);
-        assert!(agent.plan_mode_active);
-        assert!(agent.plan_mode_pending.is_none());
-    }
-
-    #[test]
     fn current_mode_update_default_deactivates_plan_mode() {
         let mut agent = make_agent(Some("s1"));
         agent.plan_mode_active = true;
@@ -375,6 +364,20 @@
 
         let refresh_needed =
             detect_plan_mode_change(&make_current_mode_update("default"), &mut agent);
+        assert!(refresh_needed);
+        assert!(!agent.plan_mode_active);
+        assert!(agent.plan_mode_pending.is_none());
+    }
+
+    /// Product Plan mode is deleted: a wire `"plan"` id must clear legacy
+    /// flags, never re-activate them.
+    #[test]
+    fn current_mode_update_plan_clears_legacy_plan_flags() {
+        let mut agent = make_agent(Some("s1"));
+        agent.plan_mode_active = true;
+        agent.plan_mode_pending = Some(true);
+
+        let refresh_needed = detect_plan_mode_change(&make_current_mode_update("plan"), &mut agent);
         assert!(refresh_needed);
         assert!(!agent.plan_mode_active);
         assert!(agent.plan_mode_pending.is_none());
@@ -392,22 +395,5 @@
             detect_plan_mode_change(&make_current_mode_update("browser_use"), &mut agent);
         assert!(refresh_needed);
         assert!(!agent.plan_mode_active);
-    }
-
-    /// Idempotent CurrentModeUpdate still signals refresh because
-    /// `plan_mode_pending` was cleared (affects effective state).
-    #[test]
-    fn current_mode_update_signals_refresh_even_on_no_op_active_change() {
-        let mut agent = make_agent(Some("s1"));
-        agent.plan_mode_active = true;
-        agent.plan_mode_pending = Some(true);
-
-        let refresh_needed = detect_plan_mode_change(&make_current_mode_update("plan"), &mut agent);
-        assert!(
-            refresh_needed,
-            "CurrentModeUpdate must always signal refresh — pending was cleared"
-        );
-        assert!(agent.plan_mode_active);
-        assert!(agent.plan_mode_pending.is_none());
     }
 

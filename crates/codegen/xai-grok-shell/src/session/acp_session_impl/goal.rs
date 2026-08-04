@@ -331,9 +331,9 @@ impl SessionActor {
             if !policy.enabled {
                 let (tokens_used, finished_marginal) = self.goal_tokens(current_tokens);
                 self.clear_pending_classifier_completions();
-                if let Err(e) = crate::session::goal_acceptance_checklist::set_all_audit_marks(
-                    &plan_path, true,
-                ) {
+                if let Err(e) =
+                    crate::session::goal_acceptance_checklist::set_all_audit_marks(&plan_path, true)
+                {
                     tracing::warn!(
                         error = %e,
                         path = %plan_path.display(),
@@ -706,9 +706,9 @@ impl SessionActor {
                 self.clear_pending_classifier_completions();
                 // Audit gate: mark every dual-checklist Audit column checked.
                 let plan_path = self.goal_tracker.lock().plan_path();
-                if let Err(e) = crate::session::goal_acceptance_checklist::set_all_audit_marks(
-                    &plan_path, true,
-                ) {
+                if let Err(e) =
+                    crate::session::goal_acceptance_checklist::set_all_audit_marks(&plan_path, true)
+                {
                     tracing::warn!(
                         error = %e,
                         path = %plan_path.display(),
@@ -760,8 +760,7 @@ impl SessionActor {
                     (tracker.plan_path(), view)
                 };
                 let refuted: Vec<u32> = gaps_findings.iter().filter_map(|f| f.criterion).collect();
-                let localized =
-                    !gaps_findings.is_empty() && refuted.len() == gaps_findings.len();
+                let localized = !gaps_findings.is_empty() && refuted.len() == gaps_findings.len();
                 let cleared = if localized {
                     // A refuted criterion invalidates its dependents' audits too:
                     // they were verified against a deliverable that is about to
@@ -847,7 +846,9 @@ impl SessionActor {
                     let mut tracker = self.goal_tracker.lock();
                     let stalled = !gap_fingerprint.is_empty()
                         && tracker.record_classifier_stall(&gap_fingerprint);
-                    let tried = tracker.snapshot().is_some_and(|o| o.strategist_cap_bonus > 0);
+                    let tried = tracker
+                        .snapshot()
+                        .is_some_and(|o| o.strategist_cap_bonus > 0);
                     (stalled, tried)
                 };
                 // A repeat means the last round changed nothing. Autonomy turns
@@ -1428,11 +1429,8 @@ impl SessionActor {
         if o.deferred_criteria.iter().any(|d| d.criterion.is_none()) {
             return false;
         }
-        open.iter().any(|n| {
-            !o.deferred_criteria
-                .iter()
-                .any(|d| d.criterion == Some(*n))
-        })
+        open.iter()
+            .any(|n| !o.deferred_criteria.iter().any(|d| d.criterion == Some(*n)))
     }
 
     /// How many acceptance criteria the plan declares, or `0` when there is no
@@ -2519,7 +2517,20 @@ impl SessionActor {
         // back to the ready-wave block, which asks the model to do the same work
         // itself, one criterion at a time.
         let ready_wave = match self.maybe_run_criterion_wave(&objective, &criteria).await {
-            Some(report) => report,
+            Some(report) => {
+                // The wave writes Exec marks and may amend write scopes on disk
+                // AFTER the GoalUpdated emitted above. Without a refresh + notify
+                // here, the pager keeps the pre-wave graph for the whole
+                // coordinating turn, and the in-memory view can disagree with
+                // plan.md until the next continuation — the amender path already
+                // forces a refresh for the same reason.
+                let (tokens_used, finished_marginal) = self.goal_tokens(current_tokens);
+                let notify = self.goal_notify_sender();
+                let mut tracker = self.goal_tracker.lock();
+                tracker.force_refresh_criteria_view();
+                notify.emit_goal_updated(&mut tracker, tokens_used, finished_marginal);
+                report
+            }
             None => ready_wave,
         };
         let next_step = resolve_goal_next_step(plan_path.as_deref())

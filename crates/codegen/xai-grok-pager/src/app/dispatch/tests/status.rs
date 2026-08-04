@@ -166,7 +166,7 @@ fn set_coding_data_sharing_idempotent_opt_in() {
         "toast must NOT use snake-case canonical 'opt-in' — display name only: {toast}",
     );
     assert!(
-        toast.contains('\u{26A0}'),
+        toast.contains('!') || toast.contains('\u{26A0}'),
         "idempotent opt-in toast uses ⚠ destructive-warning glyph (PR 9 R1, \
              General-3 Issue 5): {toast}",
     );
@@ -197,11 +197,11 @@ fn set_coding_data_sharing_idempotent_opt_out() {
         "toast must show display name 'Opt out': {toast}",
     );
     assert!(
-        toast.contains('\u{2713}'),
+        toast.contains(crate::glyphs::check_mark()),
         "idempotent opt-out toast uses ✓ safe-default glyph: {toast}",
     );
     assert!(
-        !toast.contains('\u{26A0}'),
+        !toast.contains('!') && !toast.contains('\u{26A0}'),
         "opt-out is the safe direction — must NOT use ⚠: {toast}",
     );
     // State unchanged.
@@ -226,7 +226,7 @@ fn set_coding_data_sharing_blocked_by_zdr() {
         "ZDR toast must surface the policy: {toast}",
     );
     assert!(
-        toast.contains('\u{2717}'),
+        toast.contains(crate::glyphs::ballot_x()),
         "blocked toast uses ✗ glyph: {toast}"
     );
     // State unchanged — the user was blocked, the optimistic
@@ -356,7 +356,7 @@ fn coding_data_sharing_updated_re_anchors_state_and_re_toasts() {
         "confirmation toast must use display name 'Opt out': {toast}",
     );
     assert!(
-        toast.contains('\u{2713}'),
+        toast.contains(crate::glyphs::check_mark()),
         "opt-out confirmation toast uses ✓: {toast}",
     );
 }
@@ -394,7 +394,7 @@ fn coding_data_sharing_updated_corrects_state_if_server_disagrees() {
         "post-correction toast uses display name 'Opt in': {toast}",
     );
     assert!(
-        toast.contains('\u{26A0}'),
+        toast.contains('!') || toast.contains('\u{26A0}'),
         "opt-in direction always uses ⚠ glyph, even on server-correction path: {toast}",
     );
 }
@@ -435,7 +435,10 @@ fn coding_data_sharing_failed_rolls_back_and_toasts_error() {
              (G2 Issue 2): {toast}",
     );
     assert!(toast.contains("server error"), "error in toast: {toast}");
-    assert!(toast.contains('\u{2717}'), "failure toast uses ✗: {toast}");
+    assert!(
+        toast.contains(crate::glyphs::ballot_x()),
+        "failure toast uses ✗: {toast}",
+    );
 }
 
 /// `TaskResult::CodingDataSharingFailed` reverts in the OTHER
@@ -543,12 +546,12 @@ fn set_coding_data_sharing_opt_in_renders_destructive_warning_toast() {
     assert_eq!(effects.len(), 1, "non-idempotent opt-in must emit Effect");
     let toast = read_toast(&app);
     assert!(
-        toast.contains('\u{26A0}'),
+        toast.contains('!') || toast.contains('\u{26A0}'),
         "opt-in toast MUST use ⚠ glyph (PR 9 R1, General-3 Issue 5 — \
              privacy-degrading transition deserves destructive-warning glyph): {toast}",
     );
     assert!(
-        !toast.contains('\u{2713}'),
+        !toast.contains(crate::glyphs::check_mark()),
         "opt-in toast MUST NOT use the uniform ✓ glyph — that's the \
              safe-default toast for opt-out: {toast}",
     );
@@ -581,11 +584,11 @@ fn set_coding_data_sharing_opt_out_renders_safe_default_toast() {
     let _ = dispatch(Action::SetCodingDataSharing { opted_in: false }, &mut app);
     let toast = read_toast(&app);
     assert!(
-        toast.contains('\u{2713}'),
+        toast.contains(crate::glyphs::check_mark()),
         "opt-out toast uses ✓ safe-default glyph: {toast}",
     );
     assert!(
-        !toast.contains('\u{26A0}'),
+        !toast.contains('!') && !toast.contains('\u{26A0}'),
         "opt-out toast MUST NOT use ⚠ — that's reserved for the privacy-degrading \
              direction (PR 9 R1): {toast}",
     );

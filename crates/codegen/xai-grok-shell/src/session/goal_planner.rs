@@ -984,7 +984,10 @@ mod tests {
         // A criterion that is nothing but a pipe still has to come back
         // non-empty, or the dual gate would skip the row and the goal could
         // never satisfy its own checklist.
-        assert_eq!(checklist::parse_dual_rows(&fallback_plan_body("|"))[0].criterion, "|");
+        assert_eq!(
+            checklist::parse_dual_rows(&fallback_plan_body("|"))[0].criterion,
+            "|"
+        );
 
         // An empty objective still has to yield a checkable criterion rather
         // than an empty row the dual gate would skip.
@@ -1046,7 +1049,10 @@ mod tests {
             "a bad dependency table must never pause the goal: {outcome:?}",
         );
         assert!(
-            !log.lock().unwrap().iter().any(|t| t.starts_with("fail_closed")),
+            !log.lock()
+                .unwrap()
+                .iter()
+                .any(|t| t.starts_with("fail_closed")),
             "no fail-closed event may be emitted for a repairable contract",
         );
         // And the graph the scheduler will actually use is safe.
@@ -1426,8 +1432,7 @@ mod tests {
         assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("honest fallback"));
         assert!(GOAL_PLANNER_PROMPT_TEMPLATE.contains("static/structural fallback"));
         assert!(
-            GOAL_PLANNER_PROMPT_TEMPLATE
-                .contains("core shipped logic correct in source")
+            GOAL_PLANNER_PROMPT_TEMPLATE.contains("core shipped logic correct in source")
                 || GOAL_PLANNER_PROMPT_TEMPLATE.contains("artifact present")
         );
         assert!(!GOAL_PLANNER_PROMPT_TEMPLATE.contains("rightly call theater"));

@@ -1411,6 +1411,30 @@ mod tests {
         }
     }
 
+    fn users_me_project() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\Users\me\project")
+        } else {
+            PathBuf::from("/Users/me/project")
+        }
+    }
+
+    fn users_me_src_foo_abs() -> String {
+        users_me_project()
+            .join("src")
+            .join("foo.rs")
+            .display()
+            .to_string()
+    }
+
+    fn rel_src_main() -> String {
+        Path::new("src").join("main.rs").display().to_string()
+    }
+
+    fn rel_src_foo() -> String {
+        Path::new("src").join("foo.rs").display().to_string()
+    }
+
     fn make_hunk() -> DiffHunk {
         vec![
             DiffLine {
@@ -1475,7 +1499,7 @@ mod tests {
     }
 
     use crate::render::tool_paths::ToolPathSurface;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn test_edit_block_header() {
@@ -1491,7 +1515,7 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Edit src/main.rs");
+        assert_eq!(text, format!("Edit {}", rel_src_main()));
     }
 
     #[test]
@@ -1514,7 +1538,7 @@ mod tests {
 
     #[test]
     fn header_diffstat_spans_use_diff_colors() {
-        let block = EditToolCallBlock::new("/Users/me/project/src/foo.rs", vec![make_hunk()]);
+        let block = EditToolCallBlock::new(users_me_src_foo_abs(), vec![make_hunk()]);
         let theme = Theme::current();
         let header = block.header_line(
             &theme,
@@ -1611,9 +1635,9 @@ mod tests {
 
     #[test]
     fn expanded_shows_relative_when_under_cwd_preamble_absolute() {
-        let abs = "/Users/me/project/src/foo.rs";
-        let cwd = Path::new("/Users/me/project");
-        let block = EditToolCallBlock::new(abs, vec![]);
+        let abs = users_me_src_foo_abs();
+        let cwd = users_me_project();
+        let block = EditToolCallBlock::new(&abs, vec![]);
         let theme = Theme::current();
         let header = block.header_line(
             &theme,
@@ -1621,15 +1645,15 @@ mod tests {
             false,
             false,
             ToolPathSurface::Expanded,
-            Some(cwd),
+            Some(cwd.as_path()),
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Edit src/foo.rs");
+        assert_eq!(text, format!("Edit {}", rel_src_foo()));
 
         let mut ctx = test_ctx();
         ctx.mode = DisplayMode::Expanded;
-        ctx.cwd = Some(cwd.to_path_buf());
+        ctx.cwd = Some(cwd);
         let preamble = block.preamble(&ctx).unwrap();
         let preamble_text: String = preamble
             .lines
@@ -1637,14 +1661,14 @@ mod tests {
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(preamble_text, "Edit /Users/me/project/src/foo.rs");
+        assert_eq!(preamble_text, format!("Edit {abs}"));
     }
 
     #[test]
     fn collapsed_selection_matches_painted_basename() {
         use crate::scrollback::types::derive_selection_text;
 
-        let block = EditToolCallBlock::new("/Users/me/project/src/foo.rs", vec![]);
+        let block = EditToolCallBlock::new(users_me_src_foo_abs(), vec![]);
         let mut ctx = test_ctx();
         ctx.mode = DisplayMode::Collapsed;
         let output = block.output(&ctx);
@@ -1656,13 +1680,13 @@ mod tests {
 
     #[test]
     fn header_link_target_is_absolute_file_for_all_surfaces() {
-        let abs = "/Users/me/project/src/foo.rs";
-        let cwd = Path::new("/Users/me/project");
-        let block = EditToolCallBlock::new(abs, vec![]);
-        let target = block.path_link_target(Some(cwd)).expect("file target");
+        let abs = users_me_src_foo_abs();
+        let cwd = users_me_project();
+        let block = EditToolCallBlock::new(&abs, vec![]);
+        let target = block.path_link_target(Some(cwd.as_path())).expect("file target");
         assert_eq!(
             target,
-            crate::render::osc8::LinkTarget::File(Arc::from(Path::new(abs)))
+            crate::render::osc8::LinkTarget::File(Arc::from(Path::new(&abs)))
         );
         assert_eq!(
             crate::render::osc8::resolve_link_target(&target)
@@ -1670,11 +1694,13 @@ mod tests {
                 .osc8_url
                 .unwrap()
                 .as_ref(),
-            "file:///Users/me/project/src/foo.rs"
+            url::Url::from_file_path(&abs)
+                .expect("file url")
+                .as_ref()
         );
 
         let mut ctx = test_ctx();
-        ctx.cwd = Some(cwd.to_path_buf());
+        ctx.cwd = Some(cwd);
         ctx.mode = DisplayMode::Collapsed;
         let collapsed = block.output(&ctx);
         assert_eq!(
@@ -1687,7 +1713,7 @@ mod tests {
         let expanded = block.output(&ctx);
         assert_eq!(
             expanded.lines[0].content.spans[1].content.as_ref(),
-            "src/foo.rs"
+            rel_src_foo()
         );
         assert_eq!(expanded.lines[0].link_target.as_ref(), Some(&target));
     }

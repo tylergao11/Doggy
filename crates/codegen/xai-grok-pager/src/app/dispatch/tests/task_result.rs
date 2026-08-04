@@ -2063,7 +2063,7 @@ fn persist_failed_toast_contains_key_and_error() {
     let toast = read_toast(&app);
     assert!(toast.contains("compact_mode"));
     assert!(toast.contains("permission denied"));
-    assert!(toast.contains('\u{2717}'));
+    assert!(toast.contains(crate::glyphs::ballot_x()));
 }
 
 /// Rollback path must revert BOTH `app.current_ui` AND the

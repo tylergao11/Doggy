@@ -4,11 +4,15 @@
 use super::*;
 
 fn make_config(events_per_tick: u16, mode: ScrollInputMode) -> ScrollConfig {
+    // Pin wheel pricing to 3 lines/tick — the product default is now 6, but
+    // these stream-math tests were authored against the 3-line contract.
     ScrollConfig::from_terminal(
         TerminalName::Unknown,
         ScrollConfigOverrides {
             events_per_tick: Some(events_per_tick),
             mode: Some(mode),
+            wheel_lines_per_tick: Some(3),
+            trackpad_lines_per_tick: Some(3),
             ..ScrollConfigOverrides::default()
         },
     )
@@ -657,6 +661,8 @@ fn fractional_carry_not_reamplified_by_speed_multiplier() {
             events_per_tick: Some(3),
             mode: Some(ScrollInputMode::Trackpad),
             speed_multiplier: Some(speed_to_multiplier(100)),
+            wheel_lines_per_tick: Some(3),
+            trackpad_lines_per_tick: Some(3),
             ..ScrollConfigOverrides::default()
         },
     )
@@ -1281,6 +1287,8 @@ fn forced_wheel_mode_prices_flood_as_wheel_regardless_of_timing() {
             TerminalName::Unknown,
             ScrollConfigOverrides {
                 mode,
+                wheel_lines_per_tick: Some(3),
+                trackpad_lines_per_tick: Some(3),
                 ..Default::default()
             },
         );
