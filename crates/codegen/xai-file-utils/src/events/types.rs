@@ -155,6 +155,36 @@ pub enum Event {
     GoalClassifierCapReached {
         attempt: u32,
     },
+    /// A command from the plan's `## Deterministic checks` exited non-zero, so
+    /// the round was rejected without spawning the skeptic panel. Emitted
+    /// instead of the panel's verdict events, which is exactly the saving the
+    /// gate exists for — dashboards can compare its rate against panel runs to
+    /// see how much verification cost the checks are absorbing.
+    GoalDeterministicGateFailed {
+        attempt: u32,
+        criterion: Option<u32>,
+    },
+    /// A wave of acceptance criteria was handed to one implementer subagent
+    /// each, running concurrently. `criteria` are the 1-based numbers dispatched.
+    GoalFanoutStarted {
+        criteria: Vec<u32>,
+    },
+    /// Every worker of a wave terminated and their worktrees were merged.
+    /// `landed` is the subset whose changes reached the repo cleanly — the
+    /// difference between it and `criteria` is the wave's real loss rate, which
+    /// is the number that says whether parallel execution is paying off.
+    GoalFanoutFinished {
+        criteria: Vec<u32>,
+        landed: Vec<u32>,
+        latency_ms: u64,
+    },
+    /// Fan-out was configured but the round ran serially anyway. `reason` is one
+    /// of the `FanoutDeclined` discriminators in
+    /// `xai-grok-shell::session::goal_fanout`. Not emitted for the ordinary
+    /// "fan-out off" and "only one criterion ready" cases, which are not events.
+    GoalFanoutDeclined {
+        reason: &'static str,
+    },
     /// Mid-turn `update_goal(completed: true)` was deferred to the next
     /// turn-end drain (Guard 2). `pending_depth` is the queue length
     /// AFTER the push so dashboards can spot accumulation in real time.
@@ -753,6 +783,36 @@ mod tests {
         assert_eq!(v["consecutive_failures"], 6);
         assert_eq!(v["every"], 3);
         assert_eq!(v["model_id"], "grok-4");
+    }
+
+    #[test]
+    fn goal_fanout_events_serialize_criterion_lists() {
+        let started = Event::GoalFanoutStarted {
+            criteria: vec![1, 3],
+        };
+        let v = serde_json::to_value(&started).unwrap();
+        assert_eq!(v["type"], "goal_fanout_started");
+        assert_eq!(v["criteria"], serde_json::json!([1, 3]));
+
+        // `landed` narrower than `criteria` is the interesting case: the gap is
+        // the wave's loss rate, so both lists must survive the wire.
+        let finished = Event::GoalFanoutFinished {
+            criteria: vec![1, 3],
+            landed: vec![1],
+            latency_ms: 42,
+        };
+        let v = serde_json::to_value(&finished).unwrap();
+        assert_eq!(v["type"], "goal_fanout_finished");
+        assert_eq!(v["criteria"], serde_json::json!([1, 3]));
+        assert_eq!(v["landed"], serde_json::json!([1]));
+        assert_eq!(v["latency_ms"], 42);
+
+        let declined = Event::GoalFanoutDeclined {
+            reason: "worktrees_disposed",
+        };
+        let v = serde_json::to_value(&declined).unwrap();
+        assert_eq!(v["type"], "goal_fanout_declined");
+        assert_eq!(v["reason"], "worktrees_disposed");
     }
 
     #[test]

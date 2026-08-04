@@ -19,6 +19,20 @@ impl MvpAgent {
         use xai_grok_tools::implementations::grok_build::task::types::{
             SubagentCancelOutcome, SubagentCancelTarget, SubagentEvent,
         };
+        // Bounds how many spawns may be in their SETUP phase at once (worktree
+        // creation, session copy, metadata writes). It does not bound how many
+        // subagents run — a subagent that finished setting up holds no permit
+        // and keeps working on its own thread.
+        //
+        // Setup is disk-bound, so past a handful of concurrent copies the disk
+        // is the bottleneck and more concurrency makes every spawn slower
+        // without starting any of them sooner. Unbounded, a fanned-out goal
+        // would start N worktree copies simultaneously and each subagent would
+        // wait for all N to finish; with the gate, the first ones start
+        // promptly and the rest follow.
+        let setup_gate = std::sync::Arc::new(tokio::sync::Semaphore::new(
+            crate::agent::subagent::MAX_CONCURRENT_SPAWN_SETUP,
+        ));
         tokio::task::spawn_local({
             let agent_ref = agent_ref.clone();
             async move {
@@ -27,7 +41,13 @@ impl MvpAgent {
                         SubagentEvent::Spawn(boxed) => {
                             let request = *boxed;
                             let agent_ref = agent_ref.clone();
+                            let setup_gate = setup_gate.clone();
                             tokio::task::spawn_local(async move {
+                                // Held for the whole request: `handle_subagent_request`
+                                // returns once the child session is spawned, so the
+                                // permit covers setup and is released before the
+                                // child does any real work.
+                                let _permit = setup_gate.acquire().await;
                                 let this = agent_ref.get();
                                 let parent_sid = request.parent_session_id.clone();
                                 let mut ctx = this.build_subagent_spawn_context(&parent_sid);

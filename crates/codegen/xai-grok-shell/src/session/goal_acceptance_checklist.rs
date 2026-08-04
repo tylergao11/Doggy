@@ -155,12 +155,14 @@ pub(crate) fn require_exec_complete(path: &Path) -> Result<(), String> {
 
 /// Rewrite every Audit mark in the dual checklist to `checked`.
 pub(crate) fn set_all_audit_marks(path: &Path, checked: bool) -> std::io::Result<()> {
-    let body = std::fs::read_to_string(path)?;
-    let updated = rewrite_audit_marks(&body, checked);
-    if updated != body {
-        std::fs::write(path, updated)?;
-    }
-    Ok(())
+    crate::session::goal_plan_write::with_plan_lock(path, || {
+        let body = std::fs::read_to_string(path)?;
+        let updated = rewrite_audit_marks(&body, checked);
+        if updated != body {
+            std::fs::write(path, updated)?;
+        }
+        Ok(())
+    })
 }
 
 /// Rewrite the Audit mark of only the listed criteria (1-based row numbers,
@@ -182,16 +184,52 @@ pub(crate) fn set_audit_marks_for_criteria(
     if criteria.is_empty() {
         return Ok(());
     }
-    let body = std::fs::read_to_string(path)?;
-    let updated = rewrite_audit_marks_for_criteria(&body, criteria, checked);
-    if updated != body {
-        std::fs::write(path, updated)?;
+    crate::session::goal_plan_write::with_plan_lock(path, || {
+        let body = std::fs::read_to_string(path)?;
+        let updated = rewrite_audit_marks_for_criteria(&body, criteria, checked);
+        if updated != body {
+            std::fs::write(path, updated)?;
+        }
+        Ok(())
+    })
+}
+
+/// Set the Exec mark of only the listed criteria.
+///
+/// The harness writes this column exactly once: when a criterion implemented by
+/// its own worker has been **merged into the repo**. Everywhere else the Exec
+/// column belongs to the implementer, which is why this takes a criterion list
+/// and never a "set all" — the harness has no basis to claim work it did not
+/// land.
+pub(crate) fn set_exec_marks_for_criteria(
+    path: &Path,
+    criteria: &[u32],
+    checked: bool,
+) -> std::io::Result<()> {
+    if criteria.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    crate::session::goal_plan_write::with_plan_lock(path, || {
+        let body = std::fs::read_to_string(path)?;
+        let updated = rewrite_marks_where(&body, Column::Exec, checked, |row| {
+            criteria.contains(&row)
+        });
+        if updated != body {
+            std::fs::write(path, updated)?;
+        }
+        Ok(())
+    })
 }
 
 fn mark_glyph(checked: bool) -> &'static str {
     if checked { "[x]" } else { "[ ]" }
+}
+
+/// Which checklist column a rewrite targets.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Column {
+    Exec,
+    Audit,
 }
 
 /// Rewrite Audit column cells inside the Acceptance checklist section.
@@ -213,6 +251,15 @@ pub(crate) fn rewrite_audit_marks_for_criteria(
 
 fn rewrite_audit_marks_where(
     body: &str,
+    checked: bool,
+    should_rewrite: impl FnMut(u32) -> bool,
+) -> String {
+    rewrite_marks_where(body, Column::Audit, checked, should_rewrite)
+}
+
+fn rewrite_marks_where(
+    body: &str,
+    column: Column,
     checked: bool,
     mut should_rewrite: impl FnMut(u32) -> bool,
 ) -> String {
@@ -244,12 +291,11 @@ fn rewrite_audit_marks_where(
                 row_number += 1;
                 if should_rewrite(row_number) {
                     let criterion = cells[2..].join(" | ");
-                    out.push_str(&format!(
-                        "| {} | {} | {} |\n",
-                        cells[0].trim(),
-                        glyph,
-                        criterion.trim()
-                    ));
+                    let (exec, audit) = match column {
+                        Column::Exec => (glyph, cells[1].trim()),
+                        Column::Audit => (cells[0].trim(), glyph),
+                    };
+                    out.push_str(&format!("| {exec} | {audit} | {} |\n", criterion.trim()));
                     continue;
                 }
             }
@@ -355,14 +401,16 @@ pub(crate) fn ensure_dual_checklist_section(body: &str) -> String {
 
 /// Apply [`ensure_dual_checklist_section`] to the plan file on disk.
 pub(crate) fn ensure_dual_checklist_on_disk(path: &Path) -> std::io::Result<bool> {
-    let body = std::fs::read_to_string(path)?;
-    let updated = ensure_dual_checklist_section(&body);
-    if updated != body {
-        std::fs::write(path, updated)?;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+    crate::session::goal_plan_write::with_plan_lock(path, || {
+        let body = std::fs::read_to_string(path)?;
+        let updated = ensure_dual_checklist_section(&body);
+        if updated != body {
+            std::fs::write(path, updated)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    })
 }
 
 #[cfg(test)]

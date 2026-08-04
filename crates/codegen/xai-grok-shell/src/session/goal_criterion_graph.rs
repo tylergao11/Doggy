@@ -297,7 +297,7 @@ impl CriterionGraph {
 pub(crate) fn parse_criterion_graph(body: &str) -> Option<CriterionGraph> {
     let mut nodes = Vec::new();
     for line in section_lines(body, SECTION) {
-        let cells = table_cells(&line);
+        let cells = table_cells(line);
         if cells.len() < 3 || is_separator_row(&cells) {
             continue;
         }
@@ -335,6 +335,92 @@ pub(crate) fn load_criterion_graph(body: &str, criteria: usize) -> CriterionGrap
     };
     graph.serialize_conflicts(criteria);
     graph
+}
+
+/// Expand a set of refuted criteria to include everything built on top of them.
+///
+/// The audit ratchet has to give ground here. Criterion 3 was verified against a
+/// deliverable where criterion 1 held; if criterion 1 is refuted and 1's work is
+/// redone, 3's verification was performed against a state that no longer exists.
+/// Keeping 3's audit mark would hand out credit no skeptic gave for the code that
+/// actually ships — and it fails silently, because the checklist looks complete.
+///
+/// Transitive, since a dependent's dependents are equally invalidated. The result
+/// is sorted and deduplicated, and always contains the input.
+pub(crate) fn with_dependents(
+    criteria: &[crate::session::goal_tracker::CriterionView],
+    refuted: &[u32],
+) -> Vec<u32> {
+    let mut invalid: Vec<u32> = refuted.to_vec();
+    // Each pass can only add criteria, and there are finitely many, so this
+    // terminates even if the dependency data contains a cycle (the harness
+    // discards unschedulable graphs, but this must not depend on that).
+    loop {
+        let before = invalid.len();
+        for c in criteria {
+            if !invalid.contains(&c.number)
+                && c.depends_on.iter().any(|d| invalid.contains(d))
+            {
+                invalid.push(c.number);
+            }
+        }
+        if invalid.len() == before {
+            break;
+        }
+    }
+    invalid.sort_unstable();
+    invalid.dedup();
+    invalid
+}
+
+/// Project the plan into the per-criterion rows the UI renders.
+///
+/// Joins the three things a reader needs to understand progress and can only
+/// get from three different places: the dual checklist (what is done), the
+/// dependency table (what waits for what), and run state (what was given up
+/// on). Returns an empty vec for a plan with no acceptance checklist, which is
+/// the honest answer — there is nothing to show yet.
+pub(crate) fn build_criteria_view(
+    body: &str,
+    deferred: &[crate::session::goal_tracker::DeferredCriterion],
+) -> Vec<crate::session::goal_tracker::CriterionView> {
+    let rows = crate::session::goal_acceptance_checklist::parse_dual_rows(body);
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let graph = load_criterion_graph(body, rows.len());
+    // `None` waves mean the graph could not be scheduled, so the harness runs
+    // serially — the UI says "unknown" rather than inventing a wave number that
+    // would imply parallelism the run will not have.
+    let waves = graph.parallel_waves();
+    let wave_of = |n: u32| -> Option<u32> {
+        waves.as_ref().and_then(|ws| {
+            ws.iter()
+                .position(|w| w.contains(&n))
+                .map(|i| i as u32)
+        })
+    };
+    // An unattributed deferral blocks the whole goal, so it marks every row:
+    // showing some criteria as still live would promise work that will not run.
+    let all_deferred = deferred.iter().any(|d| d.criterion.is_none());
+    rows.iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let number = i as u32 + 1;
+            let node = graph.nodes.iter().find(|n| n.number == number);
+            crate::session::goal_tracker::CriterionView {
+                number,
+                text: row.criterion.clone(),
+                exec: row.exec,
+                audit: row.audit,
+                depends_on: node.map(|n| n.depends_on.clone()).unwrap_or_default(),
+                write_scope: node.map(|n| n.write_scope.clone()).unwrap_or_default(),
+                wave: wave_of(number),
+                deferred: all_deferred
+                    || deferred.iter().any(|d| d.criterion == Some(number)),
+            }
+        })
+        .collect()
 }
 
 /// A criterion index from a cell like `2`, `#2`, or `criterion 2`.
@@ -433,6 +519,139 @@ fn prefix_at_boundary(parent: &str, child: &str) -> bool {
     child
         .strip_prefix(parent)
         .is_some_and(|rest| rest.starts_with('/'))
+}
+
+#[cfg(test)]
+mod ratchet_tests {
+    use super::*;
+    use crate::session::goal_tracker::CriterionView;
+
+    fn view(number: u32, depends_on: Vec<u32>) -> CriterionView {
+        CriterionView {
+            number,
+            text: String::new(),
+            exec: true,
+            audit: true,
+            depends_on,
+            write_scope: Vec::new(),
+            wave: None,
+            deferred: false,
+        }
+    }
+
+    #[test]
+    fn refuting_a_criterion_invalidates_the_chain_built_on_it() {
+        // 1 ← 2 ← 3, and 4 stands alone.
+        let criteria = vec![
+            view(1, vec![]),
+            view(2, vec![1]),
+            view(3, vec![2]),
+            view(4, vec![]),
+        ];
+        assert_eq!(
+            with_dependents(&criteria, &[1]),
+            vec![1, 2, 3],
+            "3 was verified against a deliverable where 1 held; redoing 1 \
+             invalidates it transitively"
+        );
+        assert_eq!(
+            with_dependents(&criteria, &[4]),
+            vec![4],
+            "an independent criterion must not drag anything else back to execution"
+        );
+    }
+
+    #[test]
+    fn a_criterion_with_several_dependencies_falls_with_any_of_them() {
+        let criteria = vec![view(1, vec![]), view(2, vec![]), view(3, vec![1, 2])];
+        assert_eq!(with_dependents(&criteria, &[2]), vec![2, 3]);
+    }
+
+    #[test]
+    fn a_dependency_cycle_cannot_hang_the_expansion() {
+        // The harness discards unschedulable graphs, but this must terminate
+        // regardless of what the plan declared.
+        let criteria = vec![view(1, vec![2]), view(2, vec![1])];
+        assert_eq!(with_dependents(&criteria, &[1]), vec![1, 2]);
+    }
+
+    #[test]
+    fn no_criteria_returns_the_input_unchanged() {
+        assert_eq!(with_dependents(&[], &[2, 1]), vec![1, 2]);
+    }
+}
+
+#[cfg(test)]
+mod criteria_view_tests {
+    use super::*;
+    use crate::session::goal_tracker::DeferredCriterion;
+
+    const PLAN: &str = "\
+# Plan
+
+## Acceptance criteria
+1. first
+2. second
+
+## Acceptance checklist
+| Exec | Audit | Criterion |
+|------|-------|-----------|
+| [x] | [x] | first |
+| [x] | [ ] | second |
+
+## Criterion dependencies
+| # | Depends on | Write scope |
+|---|------------|-------------|
+| 1 | - | src/a.rs |
+| 2 | 1 | src/b.rs |
+";
+
+    #[test]
+    fn joins_checklist_progress_dependencies_and_scopes() {
+        let view = build_criteria_view(PLAN, &[]);
+        assert_eq!(view.len(), 2);
+        assert!(view[0].audit && view[0].exec);
+        assert!(view[1].exec && !view[1].audit);
+        assert_eq!(view[1].depends_on, vec![1]);
+        assert_eq!(view[1].write_scope, vec!["src/b.rs".to_string()]);
+        assert_eq!(
+            (view[0].wave, view[1].wave),
+            (Some(0), Some(1)),
+            "a declared dependency puts the dependent in a later wave"
+        );
+    }
+
+    #[test]
+    fn an_unattributed_deferral_marks_every_criterion() {
+        let deferred = vec![DeferredCriterion {
+            criterion: None,
+            reason: "environment".into(),
+        }];
+        let view = build_criteria_view(PLAN, &deferred);
+        assert!(
+            view.iter().all(|c| c.deferred),
+            "a goal-wide blocker stops everything; showing some rows as live \
+             would promise work that will not run"
+        );
+    }
+
+    #[test]
+    fn a_scoped_deferral_marks_only_that_criterion() {
+        let deferred = vec![DeferredCriterion {
+            criterion: Some(2),
+            reason: "kept failing".into(),
+        }];
+        let view = build_criteria_view(PLAN, &deferred);
+        assert_eq!(
+            view.iter().map(|c| c.deferred).collect::<Vec<_>>(),
+            vec![false, true]
+        );
+    }
+
+    #[test]
+    fn a_plan_with_no_checklist_projects_nothing() {
+        assert!(build_criteria_view("# Plan\n\n## Acceptance criteria\n1. x\n", &[]).is_empty());
+    }
 }
 
 #[cfg(test)]

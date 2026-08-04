@@ -185,6 +185,13 @@ pub(super) enum GoalResumeOutcome {
     Message(String),
 }
 
+/// Result of deferring a blocker: what to tell the model, and whether the run
+/// ended because nothing reachable was left.
+pub(super) struct DeferralOutcome {
+    pub run_ended: bool,
+    pub ack: String,
+}
+
 /// Goal-only `<task_completion_discipline>` (Rules 1–4); `{TODO_TOOL}` from [`GoalToolNames`].
 /// Template must end with `\n` so `{DISCIPLINE_BLOCK}TRACKING:` glues correctly.
 pub(super) fn render_goal_task_discipline(names: &GoalToolNames) -> String {
@@ -402,6 +409,192 @@ fn neutralize_directive_slot(text: &str) -> std::borrow::Cow<'_, str> {
 /// verbatim. Pinned by
 /// `render_goal_continuation_directive_order_dependent_substitution_pinned`.
 #[allow(clippy::too_many_arguments)]
+/// Name the criteria whose dependencies are satisfied, with the paths each may
+/// write, or `""` when there is nothing useful to say.
+///
+/// Without this, the dependency table the planner filled in has no effect on
+/// execution: the implementer sees a flat checklist and picks whatever it likes,
+/// including criteria that cannot be finished yet because they extend work that
+/// does not exist. Naming the ready set is what turns the contract into
+/// scheduling — and naming the write scope alongside it is what makes the set
+/// safe to work on concurrently.
+///
+/// Returns empty when every criterion is ready and none declares a scope: the
+/// block would then say nothing the checklist does not already say, and an
+/// unconditional block trains the model to skim past it.
+pub(super) fn render_ready_wave_block(
+    criteria: &[crate::session::goal_tracker::CriterionView],
+) -> String {
+    if criteria.is_empty() {
+        return String::new();
+    }
+    // A dependency is satisfied once it is CLAIMED, not once it is accepted.
+    // Waiting for acceptance would deadlock the goal: the audit panel only runs
+    // after every criterion is claimed, so a dependent would wait for an audit
+    // that is itself waiting for that dependent. A refutation later strips the
+    // audit marks of everything built on the refuted criterion, which is what
+    // keeps this from burying unverified work.
+    let satisfied = |n: u32| criteria.iter().any(|c| c.number == n && (c.exec || c.audit));
+    let open = |c: &&crate::session::goal_tracker::CriterionView| !c.audit && !c.deferred;
+    // Unclaimed AND unblocked: the criteria that are actually work right now.
+    // A claimed-but-unaudited criterion is excluded on purpose — its Exec tick
+    // says the implementer believes it is done, and listing it as "work these"
+    // invites a rewrite of finished work while its audit is still pending.
+    let ready: Vec<&crate::session::goal_tracker::CriterionView> = criteria
+        .iter()
+        .filter(|c| open(c) && !c.exec && c.depends_on.iter().copied().all(satisfied))
+        .collect();
+    let claimed = criteria.iter().filter(|c| open(c) && c.exec).count();
+    if ready.is_empty() {
+        // Nothing left to start. Saying so beats saying nothing when work is
+        // merely awaiting its audit: silence here reads as "no instructions",
+        // and the model's actual next move is to request verification.
+        if claimed > 0 {
+            return format!(
+                "All remaining criteria ({claimed}) are implemented and waiting on \
+                 independent audit — do not redo them; request verification instead.\n\n"
+            );
+        }
+        // Every remaining criterion is blocked or given up on. The harness
+        // decides what happens next (defer or finish), and inventing work here
+        // would contradict it.
+        return String::new();
+    }
+    let blocked = criteria
+        .iter()
+        .filter(open)
+        .count()
+        .saturating_sub(ready.len())
+        .saturating_sub(claimed);
+    if blocked == 0 && claimed == 0 && ready.iter().all(|c| c.write_scope.is_empty()) {
+        return String::new();
+    }
+    let mut out = String::from("Ready now (dependencies met) — work these, in any order:\n");
+    for c in &ready {
+        out.push_str(&format!("- criterion {}: {}", c.number, c.text.trim()));
+        if !c.write_scope.is_empty() {
+            out.push_str(&format!(" — writes {}", c.write_scope.join(", ")));
+        }
+        out.push('\n');
+    }
+    if blocked > 0 {
+        out.push_str(&format!(
+            "{blocked} further criterion(s) wait on the above; do not start them yet.\n",
+        ));
+    }
+    if claimed > 0 {
+        out.push_str(&format!(
+            "{claimed} criterion(s) are already implemented and waiting on audit; do not \
+             redo them.\n",
+        ));
+    }
+    out.push_str(
+        "Stay inside the write scope of the criterion you are on — another criterion may own \
+         the files outside it.\n\n",
+    );
+    out
+}
+
+impl super::SessionActor {
+    /// Implement this round's ready criteria in parallel, one worker each, and
+    /// return the report to hand the coordinating model — or `None` when the
+    /// round stays serial and the caller should use the ready-wave block.
+    ///
+    /// Called from the continuation seam, so it runs BEFORE the coordinating
+    /// model gets its next turn: by the time that model is prompted, the wave's
+    /// work is already merged into the working tree and its Exec marks are set.
+    /// The model's job for the round becomes reviewing and integrating what the
+    /// workers produced, which is work only it can do — it holds the whole goal.
+    ///
+    /// Awaits the whole wave. That wait IS the parallel execution; returning
+    /// early would hand the model a directive about work still being written
+    /// underneath it.
+    pub(super) async fn maybe_run_criterion_wave(
+        &self,
+        objective: &str,
+        criteria: &[crate::session::goal_tracker::CriterionView],
+    ) -> Option<String> {
+        use crate::session::goal_fanout::{
+            ChannelWorkerSpawner, FanoutDeclined, merge_wave, plan_wave, render_wave_report,
+            repo_available, run_wave,
+        };
+        if self.goal_fanout_max <= 1 {
+            return None;
+        }
+        let cwd = std::path::PathBuf::from(self.tool_context.cwd.as_str());
+        let wave = match plan_wave(
+            criteria,
+            self.goal_fanout_max,
+            repo_available(&cwd),
+            self.goal_worktrees_disposed,
+        ) {
+            Ok(wave) => wave,
+            Err(declined) => {
+                // A configured-parallel goal that runs serially is worth one
+                // line of telemetry: the reason is invisible from the outside,
+                // and "why did fan-out not happen" is otherwise unanswerable.
+                if !matches!(
+                    declined,
+                    FanoutDeclined::Disabled | FanoutDeclined::NotEnoughReady { .. }
+                ) {
+                    self.events.emit(crate::session::events::Event::GoalFanoutDeclined {
+                        reason: declined.as_const_str(),
+                    });
+                }
+                return None;
+            }
+        };
+        let event_tx = self.tool_context.subagent_event_tx.clone()?;
+        // Tag workers with the live turn's prompt id so cancelling the turn
+        // terminates them too, exactly as it does the skeptic panel. Without
+        // this a cancelled goal leaves N workers writing into worktrees.
+        let parent_prompt_id = self
+            .current_prompt_id
+            .lock()
+            .expect("current_prompt_id mutex poisoned")
+            .clone();
+        let spawner = ChannelWorkerSpawner {
+            event_tx,
+            parent_session_id: self.session_id_string(),
+            parent_prompt_id,
+            cwd: Some(self.tool_context.cwd.as_str().to_owned()),
+            role_model: None,
+            role_agent_type: None,
+        };
+        let numbers: Vec<u32> = wave.iter().map(|c| c.number).collect();
+        self.events.emit(crate::session::events::Event::GoalFanoutStarted {
+            criteria: numbers.clone(),
+        });
+        let started = std::time::Instant::now();
+        let workers = run_wave(&spawner, objective, &wave).await;
+        let merges = merge_wave(&self.session_id_string(), &workers).await;
+        let landed: Vec<u32> = merges
+            .iter()
+            .filter(|m| m.landed())
+            .map(crate::session::goal_fanout::MergeOutcome::criterion)
+            .collect();
+        // Exec marks are set by the parent, from the merge result — never by the
+        // worker that wrote the code. A criterion that conflicted or whose
+        // worker died stays unticked and remains open work.
+        if !landed.is_empty() {
+            let plan = self.goal_tracker.lock().plan_path();
+            if let Err(e) =
+                crate::session::goal_acceptance_checklist::set_exec_marks_for_criteria(
+                    &plan, &landed, true,
+                )
+            {
+                tracing::warn!(error = %e, "criterion wave: could not set Exec marks");
+            }
+        }
+        self.events.emit(crate::session::events::Event::GoalFanoutFinished {
+            criteria: numbers,
+            landed: landed.clone(),
+            latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        });
+        Some(render_wave_report(&workers, &merges))
+    }
+}
+
 pub(super) fn render_goal_continuation_directive(
     objective: &str,
     tokens: u64,
@@ -411,6 +604,7 @@ pub(super) fn render_goal_continuation_directive(
     verifier_gaps: &str,
     strategist_note: &str,
     reverify_block: &str,
+    ready_wave: &str,
     next_step: &str,
     todo_tool: &str,
     goal_tool: &str,
@@ -436,6 +630,9 @@ pub(super) fn render_goal_continuation_directive(
         .replace("{plan_pointer}", plan_pointer)
         .replace("{verifier_gaps}", &verifier_gaps)
         .replace("{reverify_block}", reverify_block)
+        // Harness-derived from `plan.md` (criterion numbers, text, declared
+        // scopes) — no model-controlled text, so it needs no neutralizing.
+        .replace("{ready_wave}", ready_wave)
         .replace("{next_step}", &next_step)
         .replace("{todo_tool}", todo_tool)
         .replace("{goal_tool}", goal_tool)
@@ -689,6 +886,144 @@ fn fold_tokens_by_model<'a>(
         .collect();
     out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     out
+}
+
+/// The block that turns the planner's dependency table into scheduling.
+#[cfg(test)]
+mod ready_wave_tests {
+    use super::render_ready_wave_block;
+    use crate::session::goal_tracker::CriterionView;
+
+    fn view(
+        number: u32,
+        audit: bool,
+        depends_on: Vec<u32>,
+        write_scope: Vec<&str>,
+    ) -> CriterionView {
+        CriterionView {
+            number,
+            text: format!("do thing {number}"),
+            exec: audit,
+            audit,
+            depends_on,
+            write_scope: write_scope.into_iter().map(str::to_owned).collect(),
+            wave: None,
+            deferred: false,
+        }
+    }
+
+    #[test]
+    fn no_criteria_means_no_block() {
+        assert!(render_ready_wave_block(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_flat_plan_with_no_scopes_adds_nothing_the_checklist_lacks() {
+        let criteria = vec![view(1, false, vec![], vec![]), view(2, false, vec![], vec![])];
+        assert!(
+            render_ready_wave_block(&criteria).is_empty(),
+            "an unconditional block trains the model to skim past it"
+        );
+    }
+
+    #[test]
+    fn blocked_criteria_are_named_as_off_limits() {
+        let criteria = vec![
+            view(1, false, vec![], vec![]),
+            view(2, false, vec![1], vec![]),
+            view(3, false, vec![1], vec![]),
+        ];
+        let block = render_ready_wave_block(&criteria);
+        assert!(block.contains("criterion 1"), "{block}");
+        assert!(
+            !block.contains("criterion 2"),
+            "a blocked criterion must not be offered as ready: {block}"
+        );
+        assert!(
+            block.contains("2 further criterion(s) wait"),
+            "the implementer needs to know work exists but is not startable: {block}"
+        );
+    }
+
+    #[test]
+    fn a_satisfied_dependency_releases_its_dependents() {
+        let criteria = vec![
+            view(1, true, vec![], vec![]),
+            view(2, false, vec![1], vec!["src/cli.rs"]),
+        ];
+        let block = render_ready_wave_block(&criteria);
+        assert!(block.contains("criterion 2"), "{block}");
+        assert!(
+            !block.contains("criterion 1"),
+            "an accepted criterion is not work: {block}"
+        );
+        assert!(
+            block.contains("writes src/cli.rs"),
+            "the scope is what makes concurrent work safe: {block}"
+        );
+        assert!(!block.contains("further criterion"), "{block}");
+    }
+
+    #[test]
+    fn a_claimed_dependency_releases_its_dependents_or_the_goal_deadlocks() {
+        // Waiting for criterion 1's AUDIT here would wedge the run: the panel
+        // does not run until every criterion is claimed, and criterion 2 cannot
+        // be claimed while this block calls it off-limits.
+        let mut criteria = vec![view(1, false, vec![], vec![]), view(2, false, vec![1], vec![])];
+        criteria[0].exec = true;
+        let block = render_ready_wave_block(&criteria);
+        assert!(
+            block.contains("criterion 2"),
+            "a claimed dependency must release its dependents: {block}"
+        );
+        assert!(
+            !block.contains("criterion 1"),
+            "criterion 1 is claimed, so offering it again invites a rewrite: {block}"
+        );
+        assert!(
+            block.contains("waiting on audit"),
+            "the implementer must be told why criterion 1 is absent: {block}"
+        );
+    }
+
+    #[test]
+    fn all_work_claimed_asks_for_verification_instead_of_going_quiet() {
+        let mut criteria = vec![view(1, false, vec![], vec![]), view(2, false, vec![], vec![])];
+        for c in &mut criteria {
+            c.exec = true;
+        }
+        let block = render_ready_wave_block(&criteria);
+        assert!(block.contains("request verification"), "{block}");
+        assert!(
+            block.contains("do not redo them"),
+            "silence here reads as 'no instructions' and invites a rewrite: {block}"
+        );
+    }
+
+    #[test]
+    fn deferred_work_is_never_offered() {
+        let mut criteria = vec![view(1, false, vec![], vec!["a"]), view(2, false, vec![], vec!["b"])];
+        criteria[1].deferred = true;
+        let block = render_ready_wave_block(&criteria);
+        assert!(block.contains("criterion 1"), "{block}");
+        assert!(
+            !block.contains("criterion 2"),
+            "the run already gave up on it: {block}"
+        );
+        assert!(
+            !block.contains("further criterion"),
+            "deferred work is not 'waiting', it is abandoned: {block}"
+        );
+    }
+
+    #[test]
+    fn nothing_ready_says_nothing() {
+        // Every open criterion is deferred: the harness decides what happens
+        // next, and the directive must not contradict it by inventing work.
+        let mut criteria = vec![view(1, false, vec![], vec!["a"])];
+        criteria[0].deferred = true;
+        assert!(render_ready_wave_block(&criteria).is_empty());
+    }
 }
 
 #[cfg(test)]
@@ -1010,7 +1345,13 @@ impl SessionActor {
         if let Some(parent) = plan_file.parent() {
             let _ = tokio::fs::create_dir_all(parent).await;
         }
-        match tokio::fs::write(plan_file, body).await {
+        // Blocking write under the plan lock: this replaces the whole contract,
+        // so it must not interleave with a checklist rewrite reading the old
+        // body. It runs once, before any worker exists, so the block is short.
+        let written = crate::session::goal_plan_write::with_plan_lock(plan_file, || {
+            std::fs::write(plan_file, body)
+        });
+        match written {
             Ok(()) => {
                 tracing::warn!(
                     plan_file = %plan_file.display(),

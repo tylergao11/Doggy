@@ -2423,6 +2423,36 @@ impl Config {
             |v| v.clamp(GOAL_VERIFIER_SKEPTIC_MIN, GOAL_VERIFIER_SKEPTIC_MAX),
         )
     }
+    /// How many criteria may be implemented concurrently.
+    ///
+    /// Clamped to `[1, GOAL_FANOUT_MAX_CEILING]`. `1` disables fan-out, which
+    /// is the default: parallel criteria need a repo the harness can create
+    /// worktrees from and a plan whose dependency table is trustworthy, so it
+    /// is opt-in per deployment rather than on for every goal.
+    pub(crate) fn resolve_goal_fanout_max(&self) -> Resolved<u32> {
+        use crate::session::goal_fanout::{GOAL_FANOUT_MAX_CEILING, GOAL_FANOUT_MAX_DEFAULT};
+        Self::resolve_goal_u32(
+            "GROK_GOAL_FANOUT_MAX",
+            self.goal.fanout_max,
+            None,
+            GOAL_FANOUT_MAX_DEFAULT,
+            |v| v.clamp(1, GOAL_FANOUT_MAX_CEILING),
+        )
+    }
+    /// Whether finished subagent worktrees are snapshotted to a git ref and
+    /// deleted. Fan-out reads a worker's worktree to land its changes, so it
+    /// cannot run while disposal is on — see `goal_fanout`.
+    pub(crate) fn resolve_subagent_worktree_snapshot_enabled(&self) -> Resolved<bool> {
+        BoolFlag::env("GROK_SUBAGENT_WORKTREE_SNAPSHOT")
+            .config(self.features.subagent_worktree_snapshot)
+            .feature_flag(
+                self.remote_settings
+                    .as_ref()
+                    .and_then(|s| s.subagent_worktree_snapshot_enabled),
+            )
+            .default(false)
+            .resolve()
+    }
     /// Per-goal classifier run cap, floored at `GOAL_CLASSIFIER_MAX_RUNS_MIN`
     /// with no upper ceiling.
     pub(crate) fn resolve_goal_classifier_max_runs(&self) -> Resolved<u32> {
@@ -4059,6 +4089,11 @@ pub struct GoalConfig {
     pub strategist_every: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reverify_after: Option<u32>,
+    /// How many acceptance criteria may be implemented CONCURRENTLY, each by
+    /// its own subagent in its own worktree. `1` (the default) keeps the
+    /// single-implementer behaviour: the goal session does the work itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fanout_max: Option<u32>,
     #[serde(
         default,
         deserialize_with = "de_tolerant_goal_role_model",

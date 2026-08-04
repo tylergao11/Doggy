@@ -586,7 +586,13 @@ pub(crate) async fn handle_subagent_request(
         snapshot_ref: None,
         effective_model_id: Some(effective_model_id.0.to_string()),
     };
-    write_subagent_meta(&subagent_meta_dir, &subagent_meta);
+    // `meta.json` is written with create_dir_all + temp file + rename; inline
+    // that is three syscalls of LocalSet stall per spawn, which is exactly the
+    // per-spawn cost that decides how fast a fanned-out goal gets started.
+    {
+        let (dir, meta) = (subagent_meta_dir.clone(), subagent_meta.clone());
+        let _ = tokio::task::spawn_blocking(move || write_subagent_meta(&dir, &meta)).await;
+    }
     if let (Some(bucket_url), Some(upload_method)) = (
         &ctx.gcs_bucket_url,
         &ctx.gcs_upload_method,

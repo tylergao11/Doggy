@@ -282,6 +282,14 @@ fn scratch_rooted(verifier_id: &str, file_name: String) -> String {
 /// Substitute the `{verifier_id}` / `{attempt}` placeholders in
 /// `GOAL_CLASSIFIER_DETAILS_PATH_TEMPLATE` and root the result under
 /// the goal's scratch root. Pure string ops; no I/O.
+/// Whether a skeptic session forks the parent conversation.
+///
+/// Named rather than inlined so the value is one grep away and a change to it
+/// is a change to a documented invariant, not an innocuous-looking `true` in a
+/// struct literal. Audit independence is the whole basis for the panel's
+/// verdict carrying more weight than the implementer's self-report.
+pub(crate) const SKEPTIC_FORK_CONTEXT: bool = false;
+
 pub(crate) fn format_details_path(verifier_id: &str, attempt: u32) -> String {
     scratch_rooted(
         verifier_id,
@@ -621,7 +629,12 @@ impl ChannelSpawner {
             run_in_background: false,
             // Harness-internal: never surface to the model's idle reminder.
             surface_completion: false,
-            fork_context: false,
+            // MUST stay false. A skeptic that forked the implementer's context
+            // would inherit the implementer's belief that the work is done —
+            // the panel would be auditing its own reasoning, independence would
+            // die silently, and every existing test would still pass because
+            // the verdicts would look plausible. See `SKEPTIC_FORK_CONTEXT`.
+            fork_context: SKEPTIC_FORK_CONTEXT,
             result_tx,
         };
         if self
@@ -2858,6 +2871,15 @@ mod tests {
         assert_eq!(
             validate_details_path(Path::new("/var/log/foo.md")),
             Err(PathValidationError::OutsideAllowedPrefix),
+        );
+    }
+
+    #[test]
+    fn skeptics_never_fork_the_implementers_context() {
+        assert!(
+            !super::SKEPTIC_FORK_CONTEXT,
+            "a forked skeptic audits the implementer's own reasoning: independence dies \
+             silently, the verdicts still look plausible, and no other test goes red"
         );
     }
 
@@ -6128,6 +6150,55 @@ mod tests {
             }),
             ..Default::default()
         }
+    }
+
+    fn cfg_fanout(config: Option<u32>) -> crate::agent::config::Config {
+        crate::agent::config::Config {
+            goal: crate::agent::config::GoalConfig {
+                fanout_max: config,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_goal_fanout_max_defaults_to_serial() {
+        unsafe { std::env::remove_var("GROK_GOAL_FANOUT_MAX") };
+        // Literal 1, not the const: parallel criterion workers cost a session
+        // and a worktree each, so a regression that turns them on by default
+        // must fail here rather than surprise every existing deployment.
+        assert_eq!(cfg_fanout(None).resolve_goal_fanout_max().value, 1);
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_goal_fanout_max_env_beats_config_and_clamps() {
+        unsafe { std::env::remove_var("GROK_GOAL_FANOUT_MAX") };
+        let r = cfg_fanout(Some(3)).resolve_goal_fanout_max();
+        assert_eq!(r.value, 3);
+        assert_eq!(r.source, ConfigSource::Config);
+        assert_eq!(
+            cfg_fanout(Some(0)).resolve_goal_fanout_max().value,
+            1,
+            "0 workers would mean no implementer at all"
+        );
+        assert_eq!(
+            cfg_fanout(Some(99)).resolve_goal_fanout_max().value,
+            crate::session::goal_fanout::GOAL_FANOUT_MAX_CEILING,
+        );
+        unsafe { std::env::set_var("GROK_GOAL_FANOUT_MAX", "2") };
+        let r = cfg_fanout(Some(6)).resolve_goal_fanout_max();
+        assert_eq!(r.value, 2);
+        assert_eq!(r.source, ConfigSource::Env);
+        unsafe { std::env::set_var("GROK_GOAL_FANOUT_MAX", "garbage") };
+        assert_eq!(
+            cfg_fanout(None).resolve_goal_fanout_max().value,
+            1,
+            "invalid env falls through to the default"
+        );
+        unsafe { std::env::remove_var("GROK_GOAL_FANOUT_MAX") };
     }
 
     #[test]

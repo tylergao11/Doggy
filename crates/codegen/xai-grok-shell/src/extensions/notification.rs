@@ -23,6 +23,28 @@ pub struct GoalCompletionFinding {
     pub message: String,
 }
 
+/// One acceptance criterion on the wire, for the goal detail graph.
+///
+/// Mirrors [`crate::session::goal_tracker::CriterionView`]; kept as a separate
+/// wire type so the pager does not depend on session internals and a change to
+/// the harness's own representation is not automatically a wire break.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalCriterionInfo {
+    pub number: u32,
+    pub text: String,
+    pub exec: bool,
+    pub audit: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<u32>,
+    /// 0-based parallel wave; `None` when the run is serial because the
+    /// dependency table could not be scheduled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wave: Option<u32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deferred: bool,
+}
+
 /// xAI-specific session notification (parallel to acp::SessionNotification)
 /// This wraps an XaiSessionUpdate with session context for persistence and replay.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -907,6 +929,12 @@ pub enum SessionUpdate {
         /// (typically when `completion_phase` is `fixing`).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         completion_findings: Vec<GoalCompletionFinding>,
+        /// Acceptance criteria with their progress and dependency edges, so the
+        /// goal detail view can render the criterion graph instead of a single
+        /// aggregate status. Empty before a plan exists, and on shells that
+        /// predate the field.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        criteria: Vec<GoalCriterionInfo>,
     },
     /// A blocking reverse-request (permission / `ask_user_question` /
     /// plan-approval) is now **pending** on the agent, keyed by `tool_call_id`
@@ -1829,6 +1857,7 @@ mod tests {
             planning: Some(true),
             completion_phase: None,
             completion_findings: Vec::new(),
+            criteria: Vec::new(),
         }
     }
 
@@ -1869,6 +1898,7 @@ mod tests {
             planning: None,
             completion_phase: None,
             completion_findings: Vec::new(),
+            criteria: Vec::new(),
         }
     }
 

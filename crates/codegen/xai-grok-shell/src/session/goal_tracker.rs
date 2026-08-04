@@ -224,6 +224,26 @@ impl GoalPauseReason {
         }
     }
 
+    /// Whether this reason may stop a run that nobody is watching.
+    ///
+    /// An unattended goal is allowed to stop for exactly three things: the user
+    /// asked it to (`User`), the environment cannot run it (`Infra`, and only
+    /// after the retry budget is gone), or the work itself is finished as far
+    /// as it can be — reported with the deferral list (`Verification`).
+    ///
+    /// `BackOff` and `NoProgress` are explicitly NOT among them. They mean
+    /// "this round achieved nothing", which is a signal to escalate strategy,
+    /// re-plan, or defer the stuck criteria — never to sit idle waiting for a
+    /// human who may not return for hours. This is a policy invariant, not a
+    /// preference: it is enforced at the single auto-pause chokepoint so a
+    /// future code path cannot strand a run by picking the wrong reason.
+    pub fn halts_unattended_run(self) -> bool {
+        match self {
+            Self::User | Self::Infra | Self::Verification => true,
+            Self::BackOff | Self::NoProgress => false,
+        }
+    }
+
     /// Short, stable label stashed in the `GoalPaused` history entry's
     /// `detail` so the pager's Recent History distinguishes pause causes.
     fn history_detail(self) -> &'static str {
@@ -502,6 +522,63 @@ pub struct ClassifierFinding {
     pub message: String,
 }
 
+/// One acceptance criterion as the UI needs to see it: its progress, what it
+/// waits for, and which parallel wave it can run in.
+///
+/// Derived from `plan.md` rather than stored as the source of truth — the plan
+/// is the contract, and a cached copy that disagreed with it would show the
+/// user progress the completion gate does not recognise. This exists only so
+/// the pager can render the dependency graph without every UI tick re-reading
+/// and re-parsing the plan file.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CriterionView {
+    /// 1-based number, matching `## Acceptance criteria` order.
+    pub number: u32,
+    /// Criterion text, as written in the checklist.
+    pub text: String,
+    /// Implementer's claim that it is done.
+    pub exec: bool,
+    /// Independent verification granted it.
+    pub audit: bool,
+    /// Criterion numbers that must hold first (from `## Criterion dependencies`).
+    pub depends_on: Vec<u32>,
+    /// Paths this criterion may write. Not sent to the UI — it exists so the
+    /// continuation directive can tell the implementer which files belong to
+    /// the criterion it is working on, which is what keeps concurrent criteria
+    /// from overwriting each other.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub write_scope: Vec<String>,
+    /// 0-based parallel wave: every criterion in a wave can run concurrently.
+    /// `None` when the dependency table could not be scheduled and the harness
+    /// fell back to a fully serial order.
+    pub wave: Option<u32>,
+    /// The run gave up on this one; it is reported, not retried.
+    pub deferred: bool,
+}
+
+/// Work the harness gave up on so the rest of the goal could proceed.
+///
+/// Deferral is the last rung of the escalation ladder: when neither retrying,
+/// re-strategizing, nor re-planning can move a criterion, the run records why
+/// and moves on to the criteria it *can* finish, instead of stopping to ask.
+/// The set is reported when the run ends, which is the one moment the user is
+/// meant to be involved.
+///
+/// Deliberately NOT written into `plan.md`: the plan is the completion
+/// contract, and editing it to excuse unmet work would let the skeptic panel
+/// pass a goal it should refute. The contract stays honest; the deferral lives
+/// in run state beside it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DeferredCriterion {
+    /// 1-based `## Acceptance criteria` number, when the blocker was
+    /// attributable. `None` means the blocker was reported against the goal as
+    /// a whole, which blocks every remaining criterion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub criterion: Option<u32>,
+    /// Why it could not be finished, in the words of whoever gave up.
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GoalOrchestration {
     pub goal_id: String,
@@ -616,6 +693,20 @@ pub struct GoalOrchestration {
     /// shell — both fall back to the prose summary.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub last_classifier_findings: Vec<ClassifierFinding>,
+    /// Criteria the run gave up on, with the reason. Persisted: a resumed goal
+    /// must not re-attempt work already proven unreachable, and the end-of-run
+    /// report is assembled from this list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deferred_criteria: Vec<DeferredCriterion>,
+    /// Cached projection of `plan.md` for the UI. Refreshed when the plan's
+    /// mtime changes (see [`GoalTracker::refresh_criteria_view`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub criteria_view: Vec<CriterionView>,
+    /// Plan mtime the cache was built from, so a UI tick can skip the re-parse
+    /// when nothing changed. Not persisted: after a restart the plan must be
+    /// re-read once anyway, and a stale mtime would suppress that.
+    #[serde(skip)]
+    pub criteria_view_mtime: Option<std::time::SystemTime>,
     /// First verification round's full `FINAL_RESPONSE`, replayed as the
     /// breadth anchor on later rounds so a cold skeptic panel sees the whole
     /// deliverable, not just that round's fix note. Captured once (capped);
@@ -1053,6 +1144,9 @@ impl GoalTracker {
             last_classifier_at: None,
             last_classifier_gaps: None,
             last_classifier_findings: Vec::new(),
+            deferred_criteria: Vec::new(),
+            criteria_view: Vec::new(),
+            criteria_view_mtime: None,
             first_final_response: None,
             skeptic0_session_id: None,
             skeptic_model_assignment: Vec::new(),
@@ -1389,6 +1483,110 @@ impl GoalTracker {
         }
     }
 
+    /// Record that `criterion` cannot be finished, and report whether this was
+    /// new information.
+    ///
+    /// Idempotent per criterion: a blocker re-reported on a later attempt must
+    /// not stack duplicate entries into the end-of-run report. An unattributed
+    /// deferral (`None`) is kept once as well — it stands for "the goal as a
+    /// whole is blocked", and repeating it says nothing new.
+    pub fn defer_criterion(&mut self, criterion: Option<u32>, reason: String) -> bool {
+        let Some(o) = self.orchestration.as_mut() else {
+            return false;
+        };
+        if o.deferred_criteria.iter().any(|d| d.criterion == criterion) {
+            return false;
+        }
+        o.deferred_criteria.push(DeferredCriterion { criterion, reason });
+        true
+    }
+
+    /// Re-derive [`GoalOrchestration::criteria_view`] from `plan.md` when the
+    /// plan changed since the last derivation.
+    ///
+    /// Called from the UI-update chokepoint, so it runs often and must stay
+    /// cheap: one `stat` when nothing changed, one read plus a parse when it
+    /// did. The mtime guard is what makes that true — the implementer ticking
+    /// an Exec box is the only common case that invalidates the cache, and it
+    /// is exactly the case the user wants to see immediately.
+    ///
+    /// A plan that cannot be read leaves the previous view in place rather than
+    /// blanking it: a transient read failure should not make the UI claim the
+    /// goal has no criteria.
+    pub fn refresh_criteria_view(&mut self) {
+        let path = self.plan_path();
+        let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let Some(o) = self.orchestration.as_mut() else {
+            return;
+        };
+        if mtime.is_some() && mtime == o.criteria_view_mtime {
+            return;
+        }
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        o.criteria_view_mtime = mtime;
+        o.criteria_view = crate::session::goal_criterion_graph::build_criteria_view(
+            &body,
+            &o.deferred_criteria,
+        );
+    }
+
+    /// Give the still-reachable criteria a fresh verification budget after a
+    /// deferral removed the work that was consuming it.
+    ///
+    /// Without this, a run that deferred one criterion would stay pinned at
+    /// the classifier cap and defer the rest one round at a time without ever
+    /// working on them. The reset is bounded by construction: each grant costs
+    /// one deferral, and deferrals are capped at the number of criteria, so
+    /// the total verification budget stays finite. The goal token budget
+    /// remains the outer stop.
+    pub fn grant_fresh_classifier_budget(&mut self) {
+        if let Some(o) = self.orchestration.as_mut() {
+            o.classifier_runs_attempted = 0;
+            o.rounds_since_verify = 0;
+            o.reset_classifier_stall_fields();
+        }
+    }
+
+    /// Whether every criterion still open has been deferred, i.e. the run has
+    /// nothing left it can attempt.
+    ///
+    /// `total` is the number of acceptance criteria. An unattributed deferral
+    /// counts as blocking everything, because the harness has no way to tell
+    /// which criterion it spared. Returns `false` for a goal with no criteria
+    /// at all — a zero-criteria plan is a contract bug, and reading it as
+    /// "nothing left to do" would end the run instantly.
+    pub fn all_remaining_work_deferred(&self, total: usize) -> bool {
+        let Some(o) = self.orchestration.as_ref() else {
+            return false;
+        };
+        if total == 0 || o.deferred_criteria.is_empty() {
+            return false;
+        }
+        if o.deferred_criteria.iter().any(|d| d.criterion.is_none()) {
+            return true;
+        }
+        let deferred: Vec<u32> = o.deferred_criteria.iter().filter_map(|d| d.criterion).collect();
+        (1..=total as u32).all(|n| deferred.contains(&n))
+    }
+
+    /// One line per deferral for the end-of-run report.
+    pub fn deferral_report(&self) -> Vec<String> {
+        self.orchestration
+            .as_ref()
+            .map(|o| {
+                o.deferred_criteria
+                    .iter()
+                    .map(|d| match d.criterion {
+                        Some(c) => format!("criterion {c}: {}", d.reason),
+                        None => d.reason.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Count one infra-classified turn failure and report whether the harness
     /// still has retries left.
     ///
@@ -1521,6 +1719,9 @@ pub(crate) fn make_base_orchestration() -> GoalOrchestration {
         last_classifier_at: None,
         last_classifier_gaps: None,
         last_classifier_findings: Vec::new(),
+        deferred_criteria: Vec::new(),
+        criteria_view: Vec::new(),
+        criteria_view_mtime: None,
         first_final_response: None,
         skeptic0_session_id: None,
         skeptic_model_assignment: Vec::new(),
@@ -2021,6 +2222,129 @@ mod tests {
         assert!(
             t.record_classifier_stall("fp-x"),
             "after strategist reset the strict default threshold applies again"
+        );
+    }
+
+    #[test]
+    fn defer_criterion_records_once_so_the_report_has_no_duplicates() {
+        let mut t = make_tracker();
+        activate_tracker(&mut t);
+        assert!(t.defer_criterion(Some(2), "stuck on the flaky harness".into()));
+        assert!(
+            !t.defer_criterion(Some(2), "stuck again, same thing".into()),
+            "re-reporting a known blocker is not new information"
+        );
+        assert!(t.defer_criterion(Some(3), "needs a credential we do not have".into()));
+        assert_eq!(
+            t.deferral_report(),
+            vec![
+                "criterion 2: stuck on the flaky harness".to_string(),
+                "criterion 3: needs a credential we do not have".to_string(),
+            ],
+            "the report keeps the first reason per criterion, in the order given up on"
+        );
+    }
+
+    #[test]
+    fn defer_criterion_needs_an_active_goal() {
+        let mut t = make_tracker();
+        assert!(
+            !t.defer_criterion(Some(1), "no goal to defer against".into()),
+            "without orchestration there is nothing to record the deferral on"
+        );
+        assert!(t.deferral_report().is_empty());
+    }
+
+    #[test]
+    fn all_remaining_work_deferred_only_once_every_criterion_is_given_up_on() {
+        let mut t = make_tracker();
+        activate_tracker(&mut t);
+        assert!(
+            !t.all_remaining_work_deferred(3),
+            "no deferrals means the run still has everything to try"
+        );
+        t.defer_criterion(Some(1), "a".into());
+        t.defer_criterion(Some(3), "b".into());
+        assert!(
+            !t.all_remaining_work_deferred(3),
+            "criterion 2 is still reachable, so the run must keep going"
+        );
+        t.defer_criterion(Some(2), "c".into());
+        assert!(t.all_remaining_work_deferred(3));
+    }
+
+    #[test]
+    fn an_unattributed_deferral_blocks_every_criterion() {
+        let mut t = make_tracker();
+        activate_tracker(&mut t);
+        t.defer_criterion(None, "the repo will not build at all".into());
+        assert!(
+            t.all_remaining_work_deferred(9),
+            "a blocker nobody could attribute could be blocking any criterion, so the \
+             harness must not claim the others are still reachable"
+        );
+        assert_eq!(
+            t.deferral_report(),
+            vec!["the repo will not build at all".to_string()],
+            "an unattributed deferral reports the bare reason"
+        );
+    }
+
+    #[test]
+    fn zero_criteria_is_never_read_as_a_finished_run() {
+        let mut t = make_tracker();
+        activate_tracker(&mut t);
+        t.defer_criterion(Some(1), "a".into());
+        assert!(
+            !t.all_remaining_work_deferred(0),
+            "an unreadable or criteria-less plan is a contract bug; treating it as \
+             'nothing left to do' would end the run instantly"
+        );
+    }
+
+    #[test]
+    fn deferred_criteria_survive_a_snapshot_round_trip() {
+        let mut o = make_base_orchestration();
+        o.deferred_criteria = vec![
+            DeferredCriterion {
+                criterion: Some(4),
+                reason: "external service is down".into(),
+            },
+            DeferredCriterion {
+                criterion: None,
+                reason: "goal-wide blocker".into(),
+            },
+        ];
+        let json = serde_json::to_string(&o).unwrap();
+        let restored: GoalOrchestration = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            restored.deferred_criteria, o.deferred_criteria,
+            "a resumed run must not re-attempt work already proven unreachable"
+        );
+    }
+
+    #[test]
+    fn grant_fresh_classifier_budget_refills_attempts_and_clears_the_stall_streak() {
+        let mut t = make_tracker();
+        activate_tracker(&mut t);
+        {
+            let o = t.snapshot_mut().unwrap();
+            o.classifier_runs_attempted = 4;
+            o.rounds_since_verify = 7;
+        }
+        assert!(!t.record_classifier_stall("fp-a"));
+        assert_eq!(t.snapshot().unwrap().classifier_stall_count, 1);
+
+        t.grant_fresh_classifier_budget();
+
+        let o = t.snapshot().unwrap();
+        assert_eq!(o.classifier_runs_attempted, 0);
+        assert_eq!(o.rounds_since_verify, 0);
+        assert_eq!(o.classifier_stall_count, 0);
+        assert_eq!(
+            o.status,
+            GoalStatus::Active,
+            "refilling the budget must not touch the goal's status"
         );
     }
 

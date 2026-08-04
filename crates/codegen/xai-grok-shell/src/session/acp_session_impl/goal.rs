@@ -243,26 +243,24 @@ impl SessionActor {
                 }
                 let detail = cmd.message;
                 let chat_text = format_blocked_chat_notification(&reason, detail.as_deref());
-                // Format the success summary from `&reason` BEFORE
-                // consuming `reason` into `pause_msg` — saves a clone.
-                let success_summary = format!("Goal blocked: {reason}.");
-                let pause_msg = match detail {
+                let blocker = match detail {
                     Some(d) => format!("{reason}\n{d}"),
                     None => reason,
                 };
-                let applied = self
-                    .auto_pause_goal_if_active_with_message(
-                        crate::session::goal_tracker::GoalPauseReason::Verification,
-                        pause_msg,
-                    )
-                    .await;
-                if applied {
+                // Last rung of the ladder: the model tried three times and
+                // cannot move this work. Record it and send the model back to
+                // the criteria it CAN finish — an unattended run reports
+                // blockers when it ends, it does not stop to ask mid-run.
+                let outcome = self.defer_blocker_or_end_run(blocker).await;
+                if let Some(summary) = outcome {
                     self.send_slash_command_output(&chat_text).await;
-                    block_seen = true;
+                    block_seen = summary.run_ended;
+                    self.goal_blocked_streak
+                        .store(0, std::sync::atomic::Ordering::Relaxed);
                     try_send_ack(
                         ack_tx,
                         UpdateGoalAck::Accepted {
-                            summary: success_summary,
+                            summary: summary.ack,
                         },
                     );
                 } else {
@@ -752,13 +750,28 @@ impl SessionActor {
                 // finding could indict any criterion, so it forces the full
                 // clear — narrowing on partial attribution would hand out
                 // audit credit no skeptic actually gave.
-                let plan_path = self.goal_tracker.lock().plan_path();
+                let (plan_path, criteria_view) = {
+                    let mut tracker = self.goal_tracker.lock();
+                    tracker.refresh_criteria_view();
+                    let view = tracker
+                        .snapshot()
+                        .map(|o| o.criteria_view.clone())
+                        .unwrap_or_default();
+                    (tracker.plan_path(), view)
+                };
                 let refuted: Vec<u32> = gaps_findings.iter().filter_map(|f| f.criterion).collect();
                 let localized =
                     !gaps_findings.is_empty() && refuted.len() == gaps_findings.len();
                 let cleared = if localized {
+                    // A refuted criterion invalidates its dependents' audits too:
+                    // they were verified against a deliverable that is about to
+                    // change under them.
+                    let invalid = crate::session::goal_criterion_graph::with_dependents(
+                        &criteria_view,
+                        &refuted,
+                    );
                     crate::session::goal_acceptance_checklist::set_audit_marks_for_criteria(
-                        &plan_path, &refuted, false,
+                        &plan_path, &invalid, false,
                     )
                 } else {
                     crate::session::goal_acceptance_checklist::set_all_audit_marks(
@@ -793,30 +806,69 @@ impl SessionActor {
                 // rejection acks CapReached even if its fingerprint also
                 // repeated (matters at max_runs == 1).
                 if attempt >= policy.max_runs {
-                    self.auto_pause_for_classifier_cap(attempt, &details_path, &pause_summary)
-                        .await;
-                    return UpdateGoalAck::ClassifierCapReached {
-                        details_path,
-                        attempt,
-                    };
+                    // Autonomy: the cap is a per-criterion patience limit, not
+                    // the run's budget (the goal token budget is). So instead
+                    // of stopping to ask, give up on exactly the criteria the
+                    // panel keeps refuting and refill the budget for the rest.
+                    self.events
+                        .emit(crate::session::events::Event::GoalClassifierCapReached { attempt });
+                    if self
+                        .defer_refuted_or_end_run(
+                            &gaps_findings,
+                            &format!(
+                                "verification refuted it {attempt} times without progress; \
+                                 see {details_path}"
+                            ),
+                            &details_path,
+                            &pause_summary,
+                            attempt,
+                        )
+                        .await
+                    {
+                        return UpdateGoalAck::ClassifierCapReached {
+                            details_path,
+                            attempt,
+                        };
+                    }
                 }
                 // Stall early-exit: an unchanged gap fingerprint across
                 // consecutive attempts means the model addressed nothing,
                 // so pause now rather than spend the rest of the cap. An
                 // empty fingerprint carries no stable content, so it never
                 // counts as a repeat.
-                let stalled = !gap_fingerprint.is_empty()
-                    && self
-                        .goal_tracker
-                        .lock()
-                        .record_classifier_stall(&gap_fingerprint);
+                let (stalled, strategy_already_tried) = {
+                    let mut tracker = self.goal_tracker.lock();
+                    let stalled = !gap_fingerprint.is_empty()
+                        && tracker.record_classifier_stall(&gap_fingerprint);
+                    let tried = tracker.snapshot().is_some_and(|o| o.strategist_cap_bonus > 0);
+                    (stalled, tried)
+                };
+                // A repeat means the last round changed nothing. Autonomy turns
+                // that into the next rung instead of a stop: the first repeat
+                // buys a change of strategy (forced below), and a repeat that
+                // survives the new strategy is the signal that this work is
+                // genuinely stuck, so it gets deferred.
+                let mut force_strategist = false;
                 if stalled {
-                    self.auto_pause_for_classifier_stall(&details_path, &pause_summary)
-                        .await;
-                    return UpdateGoalAck::ClassifierStalled {
-                        details_path,
-                        attempt,
-                    };
+                    if strategy_already_tried {
+                        if self
+                            .defer_refuted_or_end_run(
+                                &gaps_findings,
+                                "the same gap survived a change of strategy",
+                                &details_path,
+                                &pause_summary,
+                                attempt,
+                            )
+                            .await
+                        {
+                            return UpdateGoalAck::ClassifierStalled {
+                                details_path,
+                                attempt,
+                            };
+                        }
+                    } else {
+                        force_strategist = true;
+                    }
                 }
                 // Stall-triggered strategist: fire only when neither the cap
                 // nor the stall paused this round (both returned above). The
@@ -831,11 +883,12 @@ impl SessionActor {
                     self.goal_tracker
                         .lock()
                         .claim_strategist_fire(|consecutive, last_fired| {
-                            crate::session::goal_strategist::strategist_should_fire(
-                                consecutive,
-                                last_fired,
-                                every,
-                            )
+                            force_strategist
+                                || crate::session::goal_strategist::strategist_should_fire(
+                                    consecutive,
+                                    last_fired,
+                                    every,
+                                )
                         });
                 if let Some(consecutive_not_achieved) = claimed {
                     self.maybe_run_goal_strategist(attempt, consecutive_not_achieved)
@@ -1095,8 +1148,19 @@ impl SessionActor {
                 "{}:\n{gaps_summary}",
                 crate::session::goal_classifier::PAUSE_GROUP_FIXABLE,
             );
-            self.auto_pause_for_classifier_cap(attempt, details_ptr.unwrap_or(""), &pause_summary)
-                .await;
+            self.events
+                .emit(crate::session::events::Event::GoalClassifierCapReached { attempt });
+            // This rejection came from a concurrency guard, not a panel, so it
+            // carries no per-criterion attribution: the deferral is goal-wide
+            // and ends the run with a report (see `defer_refuted_or_end_run`).
+            self.defer_refuted_or_end_run(
+                &[],
+                &format!("verification could not complete in {attempt} attempts"),
+                details_ptr.unwrap_or(""),
+                &pause_summary,
+                attempt,
+            )
+            .await;
         } else {
             // Feedback is delivered by the in-turn continuation directive, not
             // a separate nudge turn.
@@ -1114,53 +1178,271 @@ impl SessionActor {
         Some((attempt, details_ptr.unwrap_or("").to_owned(), cap_reached))
     }
 
-    /// Emit the cap-reached event + auto-pause with `BackOff`, carrying
-    /// a pause message built from `pause_summary` (grouped blockers) and
-    /// the details pointer. Extracted so both the real-classifier
-    /// `NotAchieved` path and the synthetic
-    /// `account_not_achieved_without_sampler` path share one builder.
+    /// Run the plan's deterministic checks and turn the first failure into a
+    /// rejection, or return `None` to let the skeptic panel decide.
     ///
-    /// Does NOT touch `pending_classifier_completions`. The queue is
-    /// drained into the local `cmds` Vec at the top of
-    /// `drain_goal_updates`; remaining post-cap entries are
-    /// consolidated into one `GoalClassifierPendingQueueCleared`
-    /// event by the drain loop.
-    async fn auto_pause_for_classifier_cap(
+    /// The rejection is shaped exactly like a panel rejection — same details
+    /// file, same `criterion N · …` finding text, same fingerprint source — so
+    /// `apply_classifier_outcome` clears audit marks, feeds the nudge, and
+    /// counts the stall streak without knowing the gate exists. That is what
+    /// makes this a cost optimisation rather than a second verdict path.
+    async fn deterministic_gate_rejection(
         &self,
+        plan_file: Option<&std::path::Path>,
+        verifier_id: &str,
         attempt: u32,
-        details_path: &str,
-        pause_summary: &str,
-    ) {
-        self.events
-            .emit(crate::session::events::Event::GoalClassifierCapReached { attempt });
-        let msg = format_goal_pause_message(
-            &format!("Goal classifier rejected completion {attempt} times — goal auto-paused."),
-            pause_summary,
-            details_path,
+        max_runs: u32,
+    ) -> Option<crate::session::goal_classifier::GoalClassifierOutcome> {
+        use crate::session::goal_deterministic_gate as gate;
+
+        let body = tokio::fs::read_to_string(plan_file?).await.ok()?;
+        let checks = gate::parse_checks(&body);
+        if checks.is_empty() {
+            return None;
+        }
+        let failure = gate::run_checks(self.tool_context.cwd.as_path(), &checks).await?;
+
+        let message = failure.finding_message();
+        let details_path =
+            crate::session::goal_classifier::format_details_path(verifier_id, attempt);
+        let details_body = format!(
+            "# Goal verification — deterministic gate (attempt {attempt}/{max_runs})\n\n\
+             A check declared in the plan's `## Deterministic checks` failed, so the \
+             skeptic panel was not run.\n\n\
+             - command: `{}`\n- criterion: {}\n\n## Output tail\n\n```\n{}\n```\n",
+            failure.command,
+            failure
+                .criterion
+                .map_or_else(|| "goal-wide".to_string(), |c| c.to_string()),
+            failure.detail,
         );
-        self.auto_pause_goal_if_active_with_message(
-            crate::session::goal_tracker::GoalPauseReason::BackOff,
-            msg,
+        // Best-effort, same as the panel's own details write: the verdict does
+        // not depend on the file, only the "See …" pointer does.
+        if crate::session::goal_tracker::ensure_goal_scratch_root(verifier_id).is_ok() {
+            let _ = tokio::fs::write(&details_path, details_body).await;
+        }
+
+        self.events
+            .emit(crate::session::events::Event::GoalDeterministicGateFailed {
+                attempt,
+                criterion: failure.criterion,
+            });
+        Some(
+            crate::session::goal_classifier::GoalClassifierOutcome::NotAchieved {
+                details_path,
+                gaps_summary: message.clone(),
+                gaps_findings: vec![crate::session::goal_tracker::ClassifierFinding {
+                    criterion: failure.criterion,
+                    message: message.clone(),
+                }],
+                pause_summary: format!(
+                    "{}:\n- {message}",
+                    crate::session::goal_classifier::PAUSE_GROUP_FIXABLE,
+                ),
+                // Fingerprinted from the command + its output, so a check that
+                // fails identically twice trips the same stall ladder a
+                // repeated panel gap does.
+                gap_fingerprint: crate::session::goal_classifier::gap_fingerprint(&[&message]),
+            },
         )
-        .await;
     }
 
-    /// Auto-pause early (before the run cap) when the verifier flagged the
-    /// same gaps across consecutive attempts with no progress. Distinguished
-    /// from the cap path by the `no_progress` telemetry reason (no `CapReached`
-    /// event); the grouped blockers are surfaced in the pause message.
-    async fn auto_pause_for_classifier_stall(&self, details_path: &str, pause_summary: &str) {
+    /// Defer the criteria a verification round kept refuting, and report
+    /// whether the run ended because nothing reachable was left.
+    ///
+    /// Attribution earns precision: when the panel attributed every finding,
+    /// only those criteria are given up on and the rest keep running with a
+    /// refilled verification budget. One unattributed finding could indict any
+    /// criterion, so it defers the goal as a whole — which ends the run,
+    /// because there is then no criterion the harness can honestly claim is
+    /// still reachable.
+    ///
+    /// Returns `true` when the run ended (the caller returns its cap/stall
+    /// ack), `false` when the goal is still Active on the remaining criteria.
+    async fn defer_refuted_or_end_run(
+        &self,
+        findings: &[crate::session::goal_tracker::ClassifierFinding],
+        why: &str,
+        details_path: &str,
+        pause_summary: &str,
+        attempt: u32,
+    ) -> bool {
+        let refuted: Vec<u32> = findings.iter().filter_map(|f| f.criterion).collect();
+        let localized = !findings.is_empty() && refuted.len() == findings.len();
+        let criteria_total = self.acceptance_criteria_total().await;
+        let open = self.open_criteria().await;
+
+        let (exhausted, report) = {
+            let mut tracker = self.goal_tracker.lock();
+            if localized {
+                for c in &refuted {
+                    tracker.defer_criterion(Some(*c), why.to_string());
+                }
+            } else {
+                tracker.defer_criterion(None, why.to_string());
+            }
+            let exhausted = tracker.all_remaining_work_deferred(criteria_total)
+                || !Self::has_reachable_open_criterion(&open, tracker.snapshot());
+            if !exhausted {
+                // The deferral freed the budget the stuck criteria were
+                // burning; the reachable ones get it.
+                tracker.grant_fresh_classifier_budget();
+            }
+            (exhausted, tracker.deferral_report())
+        };
+
+        if !exhausted {
+            tracing::warn!(
+                deferred = ?refuted,
+                attempt,
+                "goal: deferred the refuted criteria and refilled the verification budget",
+            );
+            return false;
+        }
+
         let msg = format_goal_pause_message(
-            "Goal verification flagged the same gaps with no progress across \
-             consecutive attempts — goal auto-paused.",
+            &format!(
+                "Goal stopped after {attempt} verification attempts: no reachable acceptance \
+                 criteria remain.\nDeferred:\n{}",
+                report
+                    .iter()
+                    .map(|line| format!("- {line}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
             pause_summary,
             details_path,
         );
         self.auto_pause_goal_if_active_with_message(
-            crate::session::goal_tracker::GoalPauseReason::NoProgress,
+            crate::session::goal_tracker::GoalPauseReason::Verification,
             msg,
         )
         .await;
+        true
+    }
+
+    /// Record a blocker as a deferral and decide whether the run can continue.
+    ///
+    /// Returns `None` when there is no Active goal to defer against (the
+    /// caller reports that as a rejected signal). Otherwise returns the ack
+    /// text for the model and whether the run ended here.
+    ///
+    /// The run ends only when every criterion has been deferred — at that
+    /// point there is genuinely nothing left to attempt, and stopping is the
+    /// report, not a request for help. While any criterion is still open, the
+    /// goal stays Active and the model is pointed at the remaining work.
+    pub(super) async fn defer_blocker_or_end_run(
+        &self,
+        blocker: String,
+    ) -> Option<DeferralOutcome> {
+        use crate::session::goal_tracker::GoalStatus;
+
+        let criteria_total = self.acceptance_criteria_total().await;
+        let (deferred_now, exhausted, report) = {
+            let mut tracker = self.goal_tracker.lock();
+            if tracker.status() != Some(GoalStatus::Active) {
+                return None;
+            }
+            // Attribution would need the model to name a criterion; today
+            // `blocked_reason` is free prose, so this is a goal-wide deferral.
+            // That is the conservative reading: it blocks everything, so the
+            // run ends rather than silently skipping unnamed work.
+            let deferred_now = tracker.defer_criterion(None, blocker.clone());
+            let exhausted = tracker.all_remaining_work_deferred(criteria_total);
+            (deferred_now, exhausted, tracker.deferral_report())
+        };
+
+        if !exhausted {
+            tracing::warn!(
+                deferred_now,
+                "goal: blocker deferred; continuing with the remaining criteria",
+            );
+            return Some(DeferralOutcome {
+                run_ended: false,
+                ack: "Blocker recorded as deferred. Continue with the acceptance criteria \
+                      that are still reachable; the deferral is reported when the goal ends."
+                    .to_string(),
+            });
+        }
+
+        // Nothing reachable is left. Stop with the full deferral list — this
+        // is the end-of-run report the user is meant to act on.
+        let msg = format!(
+            "Goal stopped: no reachable acceptance criteria remain.\nDeferred:\n{}",
+            report
+                .iter()
+                .map(|line| format!("- {line}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        self.auto_pause_goal_if_active_with_message(
+            crate::session::goal_tracker::GoalPauseReason::Verification,
+            msg,
+        )
+        .await;
+        Some(DeferralOutcome {
+            run_ended: true,
+            ack: "Blocker recorded. No reachable criteria remain, so the goal stopped and \
+                  the deferrals were reported."
+                .to_string(),
+        })
+    }
+
+    /// 1-based numbers of criteria the checklist still shows as unfinished
+    /// (either column unchecked). Empty when the plan cannot be read, which
+    /// makes the caller treat the run as having nothing reachable left rather
+    /// than looping on a plan it cannot see.
+    async fn open_criteria(&self) -> Vec<u32> {
+        let plan_path = self.goal_tracker.lock().plan_path();
+        let Ok(body) = tokio::fs::read_to_string(&plan_path).await else {
+            return Vec::new();
+        };
+        crate::session::goal_acceptance_checklist::parse_dual_rows(&body)
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| !(r.exec && r.audit))
+            .map(|(i, _)| i as u32 + 1)
+            .collect()
+    }
+
+    /// Whether any still-unfinished criterion has NOT been deferred, i.e. the
+    /// run has work left that it is still allowed to attempt.
+    ///
+    /// This is what keeps a deferral from becoming a spin: once the only open
+    /// criteria are deferred ones, continuing would re-verify work nobody
+    /// intends to do again, burning the token budget to reach the same verdict.
+    fn has_reachable_open_criterion(
+        open: &[u32],
+        snapshot: Option<&crate::session::goal_tracker::GoalOrchestration>,
+    ) -> bool {
+        let Some(o) = snapshot else {
+            return false;
+        };
+        if o.deferred_criteria.iter().any(|d| d.criterion.is_none()) {
+            return false;
+        }
+        open.iter().any(|n| {
+            !o.deferred_criteria
+                .iter()
+                .any(|d| d.criterion == Some(*n))
+        })
+    }
+
+    /// How many acceptance criteria the plan declares, or `0` when there is no
+    /// readable plan. Zero makes `all_remaining_work_deferred` answer `false`,
+    /// so a missing plan can never be mistaken for a finished run.
+    async fn acceptance_criteria_total(&self) -> usize {
+        let plan_path = self.goal_tracker.lock().plan_path();
+        let Ok(body) = tokio::fs::read_to_string(&plan_path).await else {
+            return 0;
+        };
+        let rows = crate::session::goal_acceptance_checklist::parse_dual_rows(&body).len();
+        if rows > 0 {
+            rows
+        } else {
+            crate::session::goal_acceptance_checklist::extract_numbered_acceptance_criteria(&body)
+                .len()
+        }
     }
 
     /// Auto-pause as `Blocked` (needs-user) when every refuter is a
@@ -1228,6 +1510,17 @@ impl SessionActor {
                 o.scratch_dir_ready,
             )
         };
+
+        // Deterministic gate: run the plan's own pass/fail commands before
+        // paying a panel to discover the branch does not compile. A failure is
+        // a rejection with the command's output as the finding; anything the
+        // gate cannot answer falls through to the panel unchanged.
+        if let Some(outcome) = self
+            .deterministic_gate_rejection(plan_file.as_deref(), &verifier_id, attempt, max_runs)
+            .await
+        {
+            return outcome;
+        }
 
         // Replay round 1's full deliverable summary as the breadth anchor on
         // re-verification rounds; a cold panel would otherwise see only this
@@ -1601,6 +1894,26 @@ impl SessionActor {
         }
     }
 
+    /// Tell the user now if the harness has no goal-update tool to complete
+    /// with, instead of letting the run discover it with no one watching.
+    async fn warn_if_completion_tool_missing(&self) {
+        use xai_grok_tools::types::tool::ToolKind;
+        let present = {
+            let bridge = self.agent.borrow().tool_bridge().clone();
+            bridge.tool_for_kind(ToolKind::GoalUpdate).await.is_some()
+        };
+        if present {
+            return;
+        }
+        tracing::error!("goal: no GoalUpdate tool on the active toolset; goal cannot report done");
+        self.send_slash_command_output(
+            "Warning: the active toolset exposes no goal-update tool, so this goal has no way \
+             to report completion or a blocker. It will run until the token budget is spent. \
+             Switch to a toolset that includes it before relying on an unattended run.",
+        )
+        .await;
+    }
+
     /// Resolve tool names for goal-mode prompts via `tool_for_kind()`.
     ///
     /// Centralises the lookup so `setup_goal`, `maybe_queue_goal_continuation`,
@@ -1668,6 +1981,13 @@ impl SessionActor {
     /// prompt blocks, keeping the reminder and user objective in a single
     /// user message (matching the `/loop` re-entrant pattern).
     pub(super) async fn setup_goal(&self, objective: &str, token_budget: Option<i64>) -> String {
+        // Goal creation is the one moment the user is guaranteed to be present,
+        // so a missing completion tool is reported HERE. An unattended run has
+        // no way to report completion without it: the model would work, be
+        // unable to claim done, and burn the whole token budget being nudged.
+        // Resolution falls back to the literal name, so the prompt would name a
+        // tool that does not exist and nothing would ever fail loudly.
+        self.warn_if_completion_tool_missing().await;
         let goal_id = uuid::Uuid::new_v4().to_string();
         let created_at = chrono::Utc::now().to_rfc3339();
         // Record the current session token total as baseline
@@ -2122,9 +2442,15 @@ impl SessionActor {
             scratch_ready,
             rounds_since_verify,
             refuted,
+            ready_wave,
+            criteria,
         ) = {
             let mut tracker = self.goal_tracker.lock();
             tracker.account_elapsed();
+            // The Exec column the implementer edited last turn decides which
+            // criteria are ready this turn, so the projection must be current
+            // before the block is rendered from it.
+            tracker.refresh_criteria_view();
             let o = tracker.snapshot_mut()?;
             // Count this worker round for the re-verify escalation.
             o.rounds_since_verify = o.rounds_since_verify.saturating_add(1);
@@ -2176,7 +2502,18 @@ impl SessionActor {
                 o.scratch_dir_ready,
                 rounds_since_verify,
                 refuted,
+                render_ready_wave_block(&o.criteria_view),
+                o.criteria_view.clone(),
             )
+        };
+        // Parallel round, when the plan allows one: the workers run and their
+        // results are merged HERE, before the coordinating model is prompted, so
+        // its directive describes work that already exists in the tree. Falls
+        // back to the ready-wave block, which asks the model to do the same work
+        // itself, one criterion at a time.
+        let ready_wave = match self.maybe_run_criterion_wave(&objective, &criteria).await {
+            Some(report) => report,
+            None => ready_wave,
         };
         let next_step = resolve_goal_next_step(plan_path.as_deref())
             .unwrap_or_else(|| format!("Check your `{todo_tool}` list for next steps."));
@@ -2202,6 +2539,7 @@ impl SessionActor {
             &verifier_gaps,
             &strategist_note,
             &reverify_block,
+            &ready_wave,
             &next_step,
             todo_tool,
             goal_tool,
@@ -2311,6 +2649,25 @@ impl SessionActor {
         reason: crate::session::goal_tracker::GoalPauseReason,
         message: Option<String>,
     ) -> bool {
+        // Autonomy chokepoint: every auto-pause funnels through here, so this
+        // is the one place that can guarantee an unattended run never stops
+        // for a reason the escalation ladder is supposed to handle. Refusing
+        // the transition keeps the goal Active and lets the ladder run; the
+        // alternative is a run that looks paused-and-progressing but is
+        // actually waiting for a human who was told they would not be needed.
+        if !reason.halts_unattended_run() {
+            tracing::error!(
+                ?reason,
+                ?message,
+                "goal: refused an auto-pause that would strand an unattended run; \
+                 this reason must escalate (strategy / replan / defer) instead",
+            );
+            debug_assert!(
+                false,
+                "auto-pause reason {reason:?} must not halt an unattended run",
+            );
+            return false;
+        }
         let current_tokens = self.chat_state_handle.get_total_tokens().await as i64;
         {
             let mut tracker = self.goal_tracker.lock();
@@ -2379,6 +2736,67 @@ impl SessionActor {
                 true
             }
         }
+    }
+}
+
+/// The spin-guard that decides whether a deferral leaves the run any work.
+#[cfg(test)]
+mod reachable_open_criterion_tests {
+    use super::SessionActor;
+    use crate::session::goal_tracker::{DeferredCriterion, GoalOrchestration};
+
+    fn with_deferrals(deferrals: Vec<DeferredCriterion>) -> GoalOrchestration {
+        let mut o = crate::session::goal_tracker::make_base_orchestration();
+        o.deferred_criteria = deferrals;
+        o
+    }
+
+    fn deferred(criterion: Option<u32>) -> DeferredCriterion {
+        DeferredCriterion {
+            criterion,
+            reason: "stuck".into(),
+        }
+    }
+
+    #[test]
+    fn an_open_criterion_nobody_gave_up_on_is_reachable() {
+        let o = with_deferrals(vec![deferred(Some(2))]);
+        assert!(
+            SessionActor::has_reachable_open_criterion(&[2, 3], Some(&o)),
+            "criterion 3 is unfinished and not deferred, so the run continues"
+        );
+    }
+
+    #[test]
+    fn open_work_that_is_all_deferred_leaves_nothing_to_attempt() {
+        let o = with_deferrals(vec![deferred(Some(2)), deferred(Some(3))]);
+        assert!(
+            !SessionActor::has_reachable_open_criterion(&[2, 3], Some(&o)),
+            "continuing here would re-verify work nobody intends to do again"
+        );
+    }
+
+    #[test]
+    fn a_finished_checklist_leaves_nothing_to_attempt() {
+        let o = with_deferrals(vec![deferred(Some(2))]);
+        assert!(!SessionActor::has_reachable_open_criterion(&[], Some(&o)));
+    }
+
+    #[test]
+    fn an_unattributed_deferral_makes_every_open_criterion_unreachable() {
+        let o = with_deferrals(vec![deferred(None)]);
+        assert!(
+            !SessionActor::has_reachable_open_criterion(&[1, 2, 3], Some(&o)),
+            "the blocker could be any of them, so none can be claimed reachable"
+        );
+    }
+
+    #[test]
+    fn no_orchestration_is_not_reachable() {
+        assert!(
+            !SessionActor::has_reachable_open_criterion(&[1], None),
+            "no goal state means no run to continue"
+        );
     }
 }
 

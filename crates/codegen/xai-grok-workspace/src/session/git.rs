@@ -65,6 +65,16 @@ pub const GIT_STATUS_CACHE_TTL: Duration = Duration::from_secs(2);
 /// *required* for the requested operation (e.g. `git add`, `git commit`) are
 /// unaffected.  See `git(1)` and `GIT_OPTIONAL_LOCKS`.
 pub async fn git_cli(cwd: &Path, args: &[&str]) -> Result<String> {
+    Ok(git_cli_raw(cwd, args).await?.trim().to_string())
+}
+
+/// [`git_cli`] without the trailing-whitespace trim.
+///
+/// Required whenever stdout is FILE CONTENT rather than a hash or a status line
+/// — `git show <commit>:<path>`, `git cat-file`. Trimming there silently drops
+/// the file's final newline, so content read back this way never equals the
+/// bytes on disk, and every equality check against it is wrong.
+pub async fn git_cli_raw(cwd: &Path, args: &[&str]) -> Result<String> {
     tracing::debug!(cwd = % cwd.display(), args = ? args, "git_cli");
     let mut cmd = Command::new("git");
     cmd.current_dir(cwd).arg("--no-optional-locks");
@@ -85,7 +95,7 @@ pub async fn git_cli(cwd: &Path, args: &[&str]) -> Result<String> {
         }
     };
     if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         tracing::debug!(exit_code = 0, stdout_len = stdout.len(), "git_cli success");
         Ok(stdout)
     } else {
@@ -3487,6 +3497,30 @@ mod restore_code_tests {
             .trim()
             .to_owned()
     }
+    #[tokio::test]
+    async fn git_cli_raw_preserves_file_content_exactly() {
+        if bazel_skip("git_cli_raw_preserves_file_content_exactly") {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo_with_commit(tmp.path()).await;
+        // `README.md` was committed as "hello\n". Reading it back through the
+        // trimming helper loses the newline, so a caller comparing committed
+        // content against the file on disk concludes they differ — which is how
+        // a worktree merge came to report a conflict for every text file.
+        let raw = git_cli_raw(tmp.path(), &["show", "HEAD:README.md"])
+            .await
+            .unwrap();
+        assert_eq!(raw, "hello\n", "content must survive byte-for-byte");
+        assert_eq!(
+            git_cli(tmp.path(), &["show", "HEAD:README.md"])
+                .await
+                .unwrap(),
+            "hello",
+            "git_cli still trims, which is why content must not go through it"
+        );
+    }
+
     #[tokio::test]
     async fn stash_before_destructive_op_clean_tree_returns_clean() {
         if bazel_skip("stash_before_destructive_op_clean_tree_returns_clean") {

@@ -1309,6 +1309,10 @@ pub(crate) async fn spawn_session_actor(
         goal_classifier_max_runs,
         goal_strategist_every,
         goal_reverify_after,
+        goal_fanout_max: effective_config.resolve_goal_fanout_max().value,
+        goal_worktrees_disposed: effective_config
+            .resolve_subagent_worktree_snapshot_enabled()
+            .value,
         goal_plan_reconciled: std::sync::atomic::AtomicBool::new(false),
         pending_classifier_completions: parking_lot::Mutex::new(VecDeque::new()),
         goal_classifier_in_flight: std::sync::atomic::AtomicBool::new(false),
@@ -1434,6 +1438,16 @@ pub(crate) async fn spawn_session_actor(
     if session.permissions.is_auto_mode() {
         session.wire_permission_auto_llm_classifier().await;
     }
+    // Completion authority is per-session by construction: the handle points at
+    // THIS session's sender, so `update_goal(completed: true)` can only ever
+    // reach the goal this session owns. A criterion worker spawned by a goal run
+    // therefore cannot declare the parent's goal done — it has no orchestration,
+    // so its own drain rejects the claim.
+    //
+    // Do NOT "fix" a worker's rejected completion by handing it the parent's
+    // sender. Completion is the one decision that must stay with the session
+    // holding the acceptance contract; a worker sees only its own criterion and
+    // would sign off on the whole goal from a slice of it.
     session
         .agent
         .borrow()

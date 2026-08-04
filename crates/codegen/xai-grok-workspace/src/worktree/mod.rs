@@ -2090,8 +2090,14 @@ async fn get_apply_context(worktree_path: &str) -> Result<ApplyContext> {
     .await?
 }
 
+/// The committed content of `path`, byte-for-byte.
+///
+/// Must not trim: the caller compares this against the file on disk to decide
+/// whether the base is untouched, and a stripped final newline makes that
+/// comparison fail for nearly every text file — turning every merge into a
+/// phantom conflict.
 async fn get_file_at_commit(worktree_path: &str, commit: &str, path: &str) -> Option<String> {
-    git_cli(
+    crate::session::git::git_cli_raw(
         Path::new(worktree_path),
         &["show", &format!("{}:{}", commit, path)],
     )

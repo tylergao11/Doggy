@@ -860,6 +860,15 @@ pub(crate) struct SessionActor {
     /// escalates to a forceful "re-verify now" block; cached at actor
     /// construction. Read by [`Self::prepare_goal_continuation`].
     pub(crate) goal_reverify_after: u32,
+    /// How many criteria may be implemented concurrently by their own worker
+    /// subagents; cached at actor construction. `1` (the default) means the goal
+    /// session implements everything itself. Read by
+    /// [`SessionActor::maybe_run_criterion_wave`].
+    pub(crate) goal_fanout_max: u32,
+    /// Whether finished subagent worktrees are snapshotted to a git ref and
+    /// deleted. Fan-out merges FROM a finished worker's worktree, so it declines
+    /// to run when this is on rather than dispatching work that cannot land.
+    pub(crate) goal_worktrees_disposed: bool,
     /// Set on session load once `maybe_reconcile_active_goal_without_plan`
     /// has run so subsequent prompt-flow ticks don't repeat the
     /// pause-on-load check.

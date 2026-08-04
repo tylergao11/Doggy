@@ -921,6 +921,7 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
             planning,
             completion_phase,
             completion_findings,
+            criteria,
             ..
         } => {
             let new_status = GoalDisplayStatus::parse(&status);
@@ -997,6 +998,18 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
                         .map(|f| crate::app::agent::GoalCompletionFinding {
                             severity: f.severity,
                             message: f.message,
+                        })
+                        .collect(),
+                    criteria: criteria
+                        .into_iter()
+                        .map(|c| crate::app::agent::GoalCriterion {
+                            number: c.number,
+                            text: c.text,
+                            exec: c.exec,
+                            audit: c.audit,
+                            depends_on: c.depends_on,
+                            wave: c.wave,
+                            deferred: c.deferred,
                         })
                         .collect(),
                     received_at: std::time::Instant::now(),

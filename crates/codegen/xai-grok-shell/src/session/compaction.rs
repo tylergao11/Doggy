@@ -2324,6 +2324,8 @@ mod inline_auto_compact_flow_tests {
                 crate::session::goal_classifier::GOAL_CLASSIFIER_MAX_RUNS_DEFAULT,
             goal_strategist_every: 5,
             goal_reverify_after: crate::session::acp_session::GOAL_REVERIFY_AFTER_DEFAULT,
+            goal_fanout_max: 1,
+            goal_worktrees_disposed: false,
             goal_plan_reconciled: std::sync::atomic::AtomicBool::new(false),
             pending_classifier_completions: parking_lot::Mutex::new(
                 std::collections::VecDeque::new(),

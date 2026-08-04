@@ -1259,6 +1259,38 @@ enum BootstrapInitialContext {
 }
 /// Phase 3: resume (fail-closed on copy error) > fork (live then disk, fail-open) > New.
 /// Unresolved non-empty resume is aborted by the caller before this runs.
+/// Copy a session's data on the blocking pool instead of inline.
+///
+/// The copy reads a whole `chat_history.jsonl`, parses every line, transforms
+/// it, and writes several files back. Run inline it blocks the agent's
+/// single-threaded LocalSet, which is also where every other subagent's spawn
+/// is being driven — so N criteria spawning at once pay this cost strictly one
+/// after another, and nothing else on the agent progresses while they do.
+/// Offloading is what turns fan-out from N sequential copies into N parallel
+/// ones. Same reasoning, and the same fix, as `session::fork`.
+async fn copy_session_data_offloaded(
+    storage: &crate::session::storage::jsonl::JsonlStorageAdapter,
+    source_info: &SessionInfo,
+    target_info: &SessionInfo,
+    options: crate::session::storage::CopySessionOptions,
+) -> std::io::Result<crate::session::storage::CopySessionResult> {
+    let storage = storage.clone();
+    let source_info = source_info.clone();
+    let target_info = target_info.clone();
+    match tokio::task::spawn_blocking(move || {
+        storage.copy_session_data_sync(&source_info, &target_info, options)
+    })
+    .await
+    {
+        Ok(result) => result,
+        // A panicked copy task is reported as an I/O error so the caller's
+        // existing fail-closed / fall-back-to-fresh handling applies unchanged.
+        Err(join_err) => Err(std::io::Error::other(format!(
+            "session copy task failed: {join_err}"
+        ))),
+    }
+}
+
 async fn bootstrap_initial_context(
     request: &SubagentRequest,
     resume_source: Option<&ResumeSourceData>,
@@ -1296,11 +1328,14 @@ async fn bootstrap_initial_context(
             fork_filter: false,
             ..Default::default()
         };
-        return match storage.copy_session_data_sync(
+        return match copy_session_data_offloaded(
+            &storage,
             &source_session_info,
             child_session_info,
             copy_options,
-        ) {
+        )
+        .await
+        {
             Ok(result) => {
                 let conversation = match storage.load_chat_history_from_dir(child_session_dir) {
                     Ok(items) if !items.is_empty() => items,
@@ -1375,14 +1410,24 @@ async fn bootstrap_initial_context(
             } else {
                 "forked_summarized"
             };
-            stamp_live_fork_session_metadata(
-                child_session_info,
-                &ctx.parent_session_id,
+            // Offloaded for the same reason as the session copy: this is
+            // read-modify-write on `summary.json`, and on the live fork path it
+            // is the only disk work in the spawn, so leaving it inline would
+            // serialize concurrent spawns on it.
+            let (info, parent_id, prompt_id, model, prefix, marker) = (
+                child_session_info.clone(),
+                ctx.parent_session_id.clone(),
                 request.parent_prompt_id.clone(),
-                effective_model_id,
+                effective_model_id.to_string(),
                 ctx_out.prefix_len,
-                marker,
+                marker.to_string(),
             );
+            let _ = tokio::task::spawn_blocking(move || {
+                stamp_live_fork_session_metadata(
+                    &info, &parent_id, prompt_id, &model, prefix, &marker,
+                );
+            })
+            .await;
         }
         return BootstrapInitialContext::Ready(ctx_out);
     }
@@ -1403,7 +1448,14 @@ async fn bootstrap_initial_context(
             fork_filter: true,
             ..Default::default()
         };
-        return match storage.copy_session_data_sync(parent_info, child_session_info, copy_options) {
+        return match copy_session_data_offloaded(
+            &storage,
+            parent_info,
+            child_session_info,
+            copy_options,
+        )
+        .await
+        {
             Ok(result) => {
                 tracing::info!(
                     subagent_id = % request.id, subagent_type = % request.subagent_type,
@@ -1891,6 +1943,18 @@ async fn await_subagent_turn_or_cancellation(
         prompt_rx => SubagentWaitOutcome::TurnResult(Box::new(turn_result)),
     }
 }
+/// How many subagent spawns may run their disk-bound SETUP phase at once.
+///
+/// Setup is worktree creation plus a session copy plus metadata writes — all
+/// disk. Four concurrent copies saturate a typical disk; beyond that each spawn
+/// just gets slower, so the extra concurrency delays the first subagent's start
+/// without bringing the last one's forward. Deliberately larger than 1: a fanned
+/// out goal must not serialize its criteria behind one copy at a time.
+///
+/// This caps setup only. Running subagents hold no permit — see the gate in
+/// `subagent_coordinator`.
+pub(crate) const MAX_CONCURRENT_SPAWN_SETUP: usize = 4;
+
 /// Max time a blocking `spawn_subagent` may hold the turn before it is
 /// auto-backgrounded (non-destructively). Env override: `GROK_SUBAGENT_AWAIT_BUDGET_MS`.
 const SUBAGENT_AWAIT_BUDGET: std::time::Duration = std::time::Duration::from_secs(600);

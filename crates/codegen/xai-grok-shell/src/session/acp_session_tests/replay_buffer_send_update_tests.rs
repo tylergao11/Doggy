@@ -202,6 +202,8 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
         goal_classifier_max_runs: crate::session::goal_classifier::GOAL_CLASSIFIER_MAX_RUNS_DEFAULT,
         goal_strategist_every: 5,
         goal_reverify_after: crate::session::acp_session::GOAL_REVERIFY_AFTER_DEFAULT,
+        goal_fanout_max: 1,
+        goal_worktrees_disposed: false,
         goal_plan_reconciled: std::sync::atomic::AtomicBool::new(false),
         pending_classifier_completions: parking_lot::Mutex::new(VecDeque::new()),
         goal_classifier_in_flight: std::sync::atomic::AtomicBool::new(false),

@@ -421,6 +421,72 @@ impl GoalCompletionPhase {
     }
 }
 
+/// One acceptance criterion from `GoalUpdated.criteria`.
+///
+/// Together these form the criterion graph: `depends_on` gives the edges and
+/// `wave` the parallel grouping, so the goal detail view can show which work is
+/// running at the same time instead of a single "in progress" line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalCriterion {
+    pub number: u32,
+    pub text: String,
+    /// Implementer claims it is done.
+    pub exec: bool,
+    /// Independent verification granted it.
+    pub audit: bool,
+    pub depends_on: Vec<u32>,
+    /// 0-based parallel wave; `None` when the run is serial.
+    pub wave: Option<u32>,
+    /// Given up on: reported at the end of the run, not retried.
+    pub deferred: bool,
+}
+
+impl GoalCriterion {
+    /// Progress glyph and label, in the order the gate applies them: audit
+    /// beats exec (a verified criterion is done regardless of the box), and
+    /// deferral beats both (it will never be verified).
+    pub fn state(&self) -> GoalCriterionState {
+        if self.deferred {
+            GoalCriterionState::Deferred
+        } else if self.audit {
+            GoalCriterionState::Verified
+        } else if self.exec {
+            GoalCriterionState::AwaitingAudit
+        } else {
+            GoalCriterionState::Open
+        }
+    }
+}
+
+/// Rendering state of one criterion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoalCriterionState {
+    Open,
+    AwaitingAudit,
+    Verified,
+    Deferred,
+}
+
+impl GoalCriterionState {
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Self::Open => "○",
+            Self::AwaitingAudit => "◐",
+            Self::Verified => "●",
+            Self::Deferred => "⊘",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::AwaitingAudit => "awaiting audit",
+            Self::Verified => "verified",
+            Self::Deferred => "deferred",
+        }
+    }
+}
+
 /// One structured audit finding from `GoalUpdated.completion_findings`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoalCompletionFinding {
@@ -507,6 +573,8 @@ pub struct GoalDisplayState {
     pub completion_phase: Option<GoalCompletionPhase>,
     /// Latest audit findings (typically when phase is Fixing).
     pub completion_findings: Vec<GoalCompletionFinding>,
+    /// Acceptance criteria with dependency edges. Empty until a plan exists.
+    pub criteria: Vec<GoalCriterion>,
     /// Wall-clock instant when this state was last updated from a GoalUpdated
     /// notification. Used to compute local elapsed delta between notifications
     /// so the pager can tick elapsed_ms at render frequency.
@@ -559,6 +627,7 @@ impl GoalDisplayState {
             planning: false,
             completion_phase: None,
             completion_findings: Vec::new(),
+            criteria: Vec::new(),
             received_at: std::time::Instant::now(),
             elapsed_floor_ms: 0,
         }

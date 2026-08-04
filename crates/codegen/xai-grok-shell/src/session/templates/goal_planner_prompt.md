@@ -158,6 +158,11 @@ sections, in order. `## Implementation approach` and `## Task checklist` are
 |---|------------|-------------|
 | 1 | - | <paths criterion 1 may write> |
 
+## Deterministic checks
+| # | Criterion | Command |
+|---|-----------|---------|
+| 1 | - | <a command whose exit status alone decides pass/fail> |
+
 ## Verification plan
 1. <gating|evidence: action + the observations that MUST be present to pass>
 
@@ -208,6 +213,15 @@ implemented CONCURRENTLY, so fill it in with care:
   Two criteria that may run at the same time MUST have disjoint write scopes,
   because two implementers editing one file concurrently lose each other's
   work. Prefer narrow scopes; a scope like `src/**` makes everything serial.
+  An empty scope counts as "may write anything", which also makes it serial.
+
+Criteria with disjoint scopes and no ordering between them may each be handed to
+a SEPARATE agent working in its own checkout, at the same time. Write the scope
+you would give a colleague you cannot talk to: everything that criterion needs
+to touch, and nothing else. Where a scope is wrong, two agents edit one file
+without seeing each other, and the second one's whole round is lost to a merge
+conflict — so an omitted file is far more expensive here than a scope that is
+slightly too wide.
 
 The harness never stops to ask about this table: overlapping write scopes with
 no dependency are serialized by number, and a table it cannot schedule at all
@@ -215,6 +229,24 @@ no dependency are serialized by number, and a table it cannot schedule at all
 count that disagrees with the criteria) is discarded for a fully serial order.
 Both cases run correctly and SLOWLY — the only cost of getting this wrong is
 that the goal loses all parallelism, so it is worth getting right.
+
+**Deterministic checks** — OPTIONAL commands whose **exit status alone** decides
+pass/fail: a build, a scoped test filter, a lint gate, a launch smoke check. The
+harness runs them from the workspace root BEFORE it spawns any auditor, and a
+non-zero exit rejects the round immediately with the command's output as the
+gap. This is the cheapest verification there is — one process instead of a panel
+of models — so declare a check for anything mechanically decidable.
+
+- **Criterion** — the criterion number the check decides, or `-` for goal-wide.
+  A scoped failure returns only that criterion to implementation.
+- **Command** — non-interactive, no prompts, no watch mode; must exit non-zero
+  on failure. Scope it as narrowly as the goal allows (`cargo test -p foo -- bar`
+  beats a full-workspace run) — every check runs on every verification round.
+- Declare NOTHING you are unsure about, and never a command that fails for
+  reasons unrelated to this goal (a pre-existing red test, a network fetch).
+  A check that is red before the work starts blocks the goal forever.
+- Leave the table with no numbered rows when the goal has nothing mechanically
+  checkable; the auditors then decide everything, exactly as before.
 
 **Verification plan** — how an **independent auditor** can observe each criterion.
 Tag each step `gating` (decides pass/fail) or `evidence` (optional corroboration).

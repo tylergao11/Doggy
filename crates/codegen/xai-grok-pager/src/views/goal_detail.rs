@@ -13,7 +13,9 @@ use xai_grok_shell::tools::{TodoItem, TodoStatus};
 
 use xai_grok_shell::extensions::notification::GoalClassifierVerdict;
 
-use crate::app::agent::{GoalDisplayState, GoalDisplayStatus};
+use crate::app::agent::{
+    GoalCriterion, GoalCriterionState, GoalDisplayState, GoalDisplayStatus,
+};
 use crate::render::SafeBuf;
 use crate::theme::Theme;
 use crate::views::agent_status::{
@@ -251,6 +253,173 @@ fn format_pause_reason(msg: &str) -> String {
 // Public render
 // ---------------------------------------------------------------------------
 
+/// Rows the criterion graph will occupy, for the modal's height budget.
+///
+/// Must agree with [`render_criterion_graph`] exactly: a smaller number here
+/// clips the last criteria off the bottom of the popup, which is worse than not
+/// showing the section at all because the user cannot tell it was truncated.
+fn criterion_graph_row_count(goal: &GoalDisplayState) -> u16 {
+    if goal.criteria.is_empty() {
+        return 0;
+    }
+    let serial = goal.criteria.iter().all(|c| c.wave.is_none());
+    let wave_headers = if serial {
+        0
+    } else {
+        let mut waves: Vec<Option<u32>> = goal.criteria.iter().map(|c| c.wave).collect();
+        waves.sort();
+        waves.dedup();
+        waves.iter().filter(|w| w.is_some()).count() as u16
+    };
+    // blank + section header + one row per criterion + one per wave header
+    2 + goal.criteria.len() as u16 + wave_headers
+}
+
+/// Draw the criterion graph: one row per acceptance criterion, grouped by the
+/// wave it may run in, with its dependencies and progress state.
+///
+/// Waves are the point of the view. A flat checklist cannot tell the user
+/// whether three criteria are being worked on at once or one after another, and
+/// that is the difference between a run that finishes in an hour and one that
+/// takes an afternoon. Rows within a wave are concurrent; a later wave has not
+/// started.
+///
+/// Returns the next free `y`. Renders nothing (and consumes no rows) when the
+/// goal has no criteria yet, which is every goal before its plan exists.
+#[allow(clippy::too_many_arguments)]
+fn render_criterion_graph(
+    buf: &mut Buffer,
+    goal: &GoalDisplayState,
+    theme: &Theme,
+    x: u16,
+    mut y: u16,
+    w: u16,
+    inner: Rect,
+) -> u16 {
+    if goal.criteria.is_empty() {
+        return y;
+    }
+    let bottom = inner.y + inner.height;
+    y += 1;
+    if y >= bottom {
+        return y;
+    }
+    let serial = goal.criteria.iter().all(|c| c.wave.is_none());
+    let heading = if serial {
+        "Criteria (serial):".to_string()
+    } else {
+        let waves = goal
+            .criteria
+            .iter()
+            .filter_map(|c| c.wave)
+            .max()
+            .map_or(0, |m| m + 1);
+        format!("Criteria ({waves} waves):")
+    };
+    buf.set_line_safe(
+        x,
+        y,
+        &Line::from(Span::styled(
+            heading,
+            Style::default()
+                .fg(theme.text_primary)
+                .add_modifier(Modifier::BOLD),
+        )),
+        w,
+    );
+    y += 1;
+
+    // Group by wave, keeping criterion order inside each group. A serial run
+    // has no waves, so it renders as one ungrouped list — the same rows without
+    // a grouping that would falsely imply concurrency.
+    let mut wave_ids: Vec<Option<u32>> = goal.criteria.iter().map(|c| c.wave).collect();
+    wave_ids.sort();
+    wave_ids.dedup();
+
+    for wave in wave_ids {
+        if y >= bottom {
+            return y;
+        }
+        let members: Vec<&GoalCriterion> =
+            goal.criteria.iter().filter(|c| c.wave == wave).collect();
+        if let Some(wave) = wave.filter(|_| !serial) {
+            let concurrency = if members.len() > 1 {
+                format!(" ({} in parallel)", members.len())
+            } else {
+                String::new()
+            };
+            buf.set_line_safe(
+                x,
+                y,
+                &Line::from(Span::styled(
+                    format!("  Wave {}{concurrency}", wave + 1),
+                    Style::default().fg(theme.gray),
+                )),
+                w,
+            );
+            y += 1;
+        }
+        for c in members {
+            if y >= bottom {
+                return y;
+            }
+            let state = c.state();
+            let state_style = Style::default().fg(match state {
+                GoalCriterionState::Verified => theme.accent_plan,
+                GoalCriterionState::AwaitingAudit => theme.warning,
+                GoalCriterionState::Deferred => theme.accent_error,
+                GoalCriterionState::Open => theme.gray,
+            });
+            let deps = if c.depends_on.is_empty() {
+                String::new()
+            } else {
+                let list = c
+                    .depends_on
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(" ← {list}")
+            };
+            buf.set_line_safe(
+                x,
+                y,
+                &Line::from(vec![
+                    Span::styled(format!("    {} ", state.glyph()), state_style),
+                    Span::styled(
+                        format!("{}. ", c.number),
+                        Style::default().fg(theme.gray_dim),
+                    ),
+                    Span::styled(
+                        truncate_criterion(&c.text),
+                        Style::default().fg(theme.text_secondary),
+                    ),
+                    Span::styled(deps, Style::default().fg(theme.gray_dim)),
+                ]),
+                w,
+            );
+            y += 1;
+        }
+    }
+    y
+}
+
+/// Longest criterion text shown in the graph.
+///
+/// Criteria are one-line outcomes, but a planner sometimes writes a sentence.
+/// Truncating keeps the dependency suffix (`← 1,2`) on screen, which is the part
+/// the graph exists to show.
+const CRITERION_TEXT_MAX: usize = 56;
+
+fn truncate_criterion(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= CRITERION_TEXT_MAX {
+        return trimmed.to_string();
+    }
+    let kept: String = trimmed.chars().take(CRITERION_TEXT_MAX - 1).collect();
+    format!("{kept}…")
+}
+
 /// True when the goal carries at least one signal from the
 /// completion classifier — gates rendering of the modal's
 /// "Completion review" section so a goal that has never been
@@ -449,6 +618,7 @@ pub fn goal_detail_area(screen: Rect, goal: &GoalDisplayState, todos: &[TodoItem
     } else {
         0
     };
+    let criterion_lines = criterion_graph_row_count(goal);
     let content_h = 2
         + 1
         + reason_lines
@@ -459,6 +629,7 @@ pub fn goal_detail_area(screen: Rect, goal: &GoalDisplayState, todos: &[TodoItem
         + todo_lines
         + subagent_lines
         + per_model_lines
+        + criterion_lines
         + completion_review_lines
         + history_lines
         + 1;
@@ -887,6 +1058,12 @@ pub fn render_goal_detail(
         return Some(close_rect);
     }
 
+    // ── Criterion graph (waves + dependency edges) ──
+    y = render_criterion_graph(buf, goal, &theme, x, y, w, inner);
+    if y >= inner.y + inner.height {
+        return Some(close_rect);
+    }
+
     // ── Doggy completion gate (phase + audit findings) ──
     if goal.completion_phase.is_some() || !goal.completion_findings.is_empty() {
         y += 1;
@@ -1145,9 +1322,141 @@ mod tests {
             planning: false,
             completion_phase: None,
             completion_findings: Vec::new(),
+            criteria: Vec::new(),
             received_at: std::time::Instant::now(),
             elapsed_floor_ms: 0,
         }
+    }
+
+    fn criterion(number: u32, wave: Option<u32>, depends_on: Vec<u32>) -> GoalCriterion {
+        GoalCriterion {
+            number,
+            text: format!("criterion {number}"),
+            exec: false,
+            audit: false,
+            depends_on,
+            wave,
+            deferred: false,
+        }
+    }
+
+    #[test]
+    fn criterion_state_orders_deferral_over_audit_over_exec() {
+        let mut c = criterion(1, None, vec![]);
+        assert_eq!(c.state(), GoalCriterionState::Open);
+        c.exec = true;
+        assert_eq!(
+            c.state(),
+            GoalCriterionState::AwaitingAudit,
+            "an implementer's own claim is not acceptance"
+        );
+        c.audit = true;
+        assert_eq!(c.state(), GoalCriterionState::Verified);
+        c.deferred = true;
+        assert_eq!(
+            c.state(),
+            GoalCriterionState::Deferred,
+            "deferred work will never be verified, so deferral wins"
+        );
+    }
+
+    #[test]
+    fn criterion_graph_height_counts_wave_headers() {
+        let mut goal = make_goal();
+        assert_eq!(
+            criterion_graph_row_count(&goal),
+            0,
+            "a goal with no plan yet must not reserve rows"
+        );
+
+        // Two waves: {1,2} then {3}. blank + header + 2 wave headers + 3 rows.
+        goal.criteria = vec![
+            criterion(1, Some(0), vec![]),
+            criterion(2, Some(0), vec![]),
+            criterion(3, Some(1), vec![1]),
+        ];
+        assert_eq!(criterion_graph_row_count(&goal), 7);
+
+        // Serial (no waves): no wave headers, so blank + header + 3 rows.
+        for c in &mut goal.criteria {
+            c.wave = None;
+        }
+        assert_eq!(criterion_graph_row_count(&goal), 5);
+    }
+
+    #[test]
+    fn criterion_graph_height_matches_what_render_draws() {
+        let mut goal = make_goal();
+        goal.criteria = vec![
+            criterion(1, Some(0), vec![]),
+            criterion(2, Some(0), vec![]),
+            criterion(3, Some(1), vec![1, 2]),
+        ];
+        // A buffer tall enough that the renderer never clips, so the rows it
+        // advances past are the rows it actually wants.
+        let area = Rect::new(0, 0, 80, 40);
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default();
+        let end = render_criterion_graph(&mut buf, &goal, &theme, 1, 0, 78, area);
+        assert_eq!(
+            end,
+            criterion_graph_row_count(&goal),
+            "the height budget and the renderer must agree or the last criteria \
+             are silently clipped off the popup"
+        );
+    }
+
+    #[test]
+    fn criterion_graph_shows_dependencies_and_parallelism() {
+        let mut goal = make_goal();
+        goal.criteria = vec![
+            criterion(1, Some(0), vec![]),
+            criterion(2, Some(0), vec![]),
+            criterion(3, Some(1), vec![1, 2]),
+        ];
+        let area = Rect::new(0, 0, 80, 40);
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default();
+        render_criterion_graph(&mut buf, &goal, &theme, 1, 0, 78, area);
+        let text = buffer_text(&buf);
+        assert!(text.contains("Criteria (2 waves)"), "{text}");
+        assert!(
+            text.contains("Wave 1 (2 in parallel)"),
+            "the concurrency of a wave is the point of the view: {text}"
+        );
+        assert!(
+            text.contains("← 1,2"),
+            "criterion 3's dependencies must be visible: {text}"
+        );
+    }
+
+    #[test]
+    fn a_serial_run_is_not_drawn_as_waves() {
+        let mut goal = make_goal();
+        goal.criteria = vec![criterion(1, None, vec![]), criterion(2, None, vec![1])];
+        let area = Rect::new(0, 0, 80, 40);
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default();
+        render_criterion_graph(&mut buf, &goal, &theme, 1, 0, 78, area);
+        let text = buffer_text(&buf);
+        assert!(text.contains("Criteria (serial)"), "{text}");
+        assert!(
+            !text.contains("Wave"),
+            "showing waves for a serial run promises parallelism that will not \
+             happen: {text}"
+        );
+    }
+
+    #[test]
+    fn the_graph_never_draws_past_the_popup() {
+        let mut goal = make_goal();
+        goal.criteria = (1..=20).map(|n| criterion(n, Some(n - 1), vec![])).collect();
+        // Only 6 rows of room; the renderer must stop, not paint outside.
+        let area = Rect::new(0, 0, 80, 6);
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default();
+        let end = render_criterion_graph(&mut buf, &goal, &theme, 1, 0, 78, area);
+        assert!(end <= area.y + area.height, "clipped at the bottom, got {end}");
     }
 
     #[test]

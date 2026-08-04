@@ -5,7 +5,7 @@ Status: Active
 Tokens: {tokens} | Elapsed: {elapsed}
 </goal-state>
 
-{bail_preface}{plan_pointer}{verifier_gaps}{strategist_note}{reverify_block}Goal NOT complete — continue working. Next step:
+{bail_preface}{plan_pointer}{verifier_gaps}{strategist_note}{reverify_block}{ready_wave}Goal NOT complete — continue working. Next step:
 {next_step}
 
 Keep your {todo_tool} list current (≥1 `in_progress`, descriptive

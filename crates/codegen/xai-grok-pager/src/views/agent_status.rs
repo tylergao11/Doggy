@@ -285,12 +285,55 @@ pub fn goal_status_line(
         format!("Goal: {label}")
     };
 
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled("[", dim_style),
         Span::styled(goal_text, label_style),
         Span::styled("]", dim_style),
-        Span::styled(format!("  {tokens_display}  {elapsed_str}"), dim_style),
-    ])
+    ];
+    // Criterion progress sits next to the phase because the phase alone cannot
+    // answer "how much is left": a goal reads "Executing" from the first minute
+    // to the last. With criteria running concurrently, the count is also the
+    // only place the chip can show parallelism at all.
+    if let Some(progress) = criteria_progress_label(goal) {
+        spans.push(Span::styled(format!("  {progress}"), dim_style));
+    }
+    spans.push(Span::styled(
+        format!("  {tokens_display}  {elapsed_str}"),
+        dim_style,
+    ));
+    Line::from(spans)
+}
+
+/// Compact criterion aggregate for the status chip, e.g. `2/5 ✓ · 2 ▸`.
+///
+/// `None` when there are no criteria yet (pre-plan), so the chip stays exactly
+/// as it was before this existed rather than showing `0/0`.
+///
+/// Counts verified criteria against the total, then how many are in flight —
+/// open work in the current wave, which is the number a reader uses to judge
+/// whether the run is fanned out or crawling. Deferred criteria are called out
+/// separately because they will never become verified, so folding them into
+/// either number would misreport what is left.
+pub fn criteria_progress_label(goal: &GoalDisplayState) -> Option<String> {
+    let total = goal.criteria.len();
+    if total == 0 {
+        return None;
+    }
+    let verified = goal.criteria.iter().filter(|c| c.audit).count();
+    let deferred = goal.criteria.iter().filter(|c| c.deferred).count();
+    let in_flight = goal
+        .criteria
+        .iter()
+        .filter(|c| !c.audit && !c.deferred)
+        .count();
+    let mut out = format!("{verified}/{total} ✓");
+    if in_flight > 0 {
+        out.push_str(&format!(" · {in_flight} ▸"));
+    }
+    if deferred > 0 {
+        out.push_str(&format!(" · {deferred} ⊘"));
+    }
+    Some(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +374,60 @@ pub fn mcp_status_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn criteria_progress_label_reports_verified_in_flight_and_deferred() {
+        use crate::app::agent::GoalCriterion;
+        let criterion = |number: u32, audit: bool, deferred: bool| GoalCriterion {
+            number,
+            text: "c".into(),
+            exec: audit,
+            audit,
+            depends_on: Vec::new(),
+            wave: None,
+            deferred,
+        };
+        let mut goal = make_goal(
+            GoalDisplayStatus::Active,
+            GoalDisplayPhase::Executing,
+            None,
+            0,
+            0,
+        );
+        assert_eq!(
+            criteria_progress_label(&goal),
+            None,
+            "before a plan exists the chip must read exactly as it did before"
+        );
+
+        goal.criteria = vec![
+            criterion(1, true, false),
+            criterion(2, false, false),
+            criterion(3, false, false),
+        ];
+        assert_eq!(
+            criteria_progress_label(&goal).as_deref(),
+            Some("1/3 ✓ · 2 ▸")
+        );
+
+        goal.criteria[2].deferred = true;
+        assert_eq!(
+            criteria_progress_label(&goal).as_deref(),
+            Some("1/3 ✓ · 1 ▸ · 1 ⊘"),
+            "deferred work is neither done nor in flight; folding it into either \
+             would misreport what is left"
+        );
+
+        for c in &mut goal.criteria {
+            c.audit = true;
+            c.deferred = false;
+        }
+        assert_eq!(
+            criteria_progress_label(&goal).as_deref(),
+            Some("3/3 ✓"),
+            "a finished goal shows no in-flight or deferred segment"
+        );
+    }
 
     #[test]
     fn tokens_compact_sub_thousand() {
@@ -425,6 +522,7 @@ mod tests {
             planning: false,
             completion_phase: None,
             completion_findings: Vec::new(),
+            criteria: Vec::new(),
             received_at: std::time::Instant::now(),
             elapsed_floor_ms: 0,
         }

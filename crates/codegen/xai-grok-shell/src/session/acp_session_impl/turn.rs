@@ -1366,14 +1366,25 @@ impl SessionActor {
             if streak >= GOAL_CONTINUATION_BACKOFF_THRESHOLD {
                 self.goal_continuation_streak
                     .store(0, std::sync::atomic::Ordering::Relaxed);
-                self.auto_pause_goal_if_active(
-                    crate::session::goal_tracker::GoalPauseReason::BackOff,
-                )
-                .await;
+                // Safety valve, not a request for help: N turns in a row ended
+                // without completing, so the harness gives up on the work it
+                // cannot attribute and reports it. An unattended run must not
+                // sit here waiting for `/goal resume`.
+                let ended = self
+                    .defer_blocker_or_end_run(format!(
+                        "{GOAL_CONTINUATION_BACKOFF_THRESHOLD} consecutive turns ended without \
+                         completing"
+                    ))
+                    .await
+                    .is_some_and(|o| o.run_ended);
+                let tail = if ended {
+                    "The goal stopped and reported what was left undone."
+                } else {
+                    "Continuing with the acceptance criteria that are still reachable."
+                };
                 self.send_slash_command_output(&format!(
-                    "Goal auto-paused after {GOAL_CONTINUATION_BACKOFF_THRESHOLD} consecutive \
-                     non-completing turns. The model is not making progress. \
-                     Use /goal resume to retry or /goal clear to abandon."
+                    "Goal hit {GOAL_CONTINUATION_BACKOFF_THRESHOLD} consecutive non-completing \
+                     turns. {tail}"
                 ))
                 .await;
             }

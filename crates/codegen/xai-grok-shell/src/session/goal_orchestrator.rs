@@ -46,6 +46,11 @@ impl GoalNotifySender {
         finished_subagent_tokens: i64,
     ) {
         tracker.account_elapsed();
+        // Persisted updates are the ones the user sees as state transitions, so
+        // the criterion graph is re-derived here (mtime-guarded) rather than on
+        // the high-frequency ephemeral path, where re-parsing the plan on every
+        // progress tick would buy nothing.
+        tracker.refresh_criteria_view();
         let Some(o) = tracker.snapshot() else { return };
         self.send_update(build_goal_updated(o, tokens_used, finished_subagent_tokens));
     }
@@ -219,6 +224,19 @@ pub(crate) fn build_goal_updated(
         planning: o.planning_in_flight.then_some(true),
         completion_phase: None,
         completion_findings: Vec::new(),
+        criteria: o
+            .criteria_view
+            .iter()
+            .map(|c| crate::extensions::notification::GoalCriterionInfo {
+                number: c.number,
+                text: c.text.clone(),
+                exec: c.exec,
+                audit: c.audit,
+                depends_on: c.depends_on.clone(),
+                wave: c.wave,
+                deferred: c.deferred,
+            })
+            .collect(),
     }
 }
 
@@ -260,6 +278,7 @@ pub(crate) fn build_goal_cleared() -> XaiSessionUpdate {
         planning: None,
         completion_phase: None,
         completion_findings: Vec::new(),
+        criteria: Vec::new(),
     }
 }
 
