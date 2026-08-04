@@ -794,6 +794,11 @@ impl SessionActor {
             let mut round_artifact = artifact_tracker;
             // Doggy: completion authority for Active goals (Round ≠ Task).
             let mut doggy_machine = xai_doggy_orchestrator::TaskMachine::new();
+            // …and its termination measure. The completion rules decide only
+            // whether the task is done; on their own they will ask for another
+            // round forever, and this loop has no reason of its own to stop.
+            let mut doggy_stall = xai_doggy_orchestrator::StallTracker::new();
+            let mut doggy_rounds: u32 = 0;
             if self.doggy_task_bound() {
                 doggy_machine.start();
             }
@@ -828,8 +833,21 @@ impl SessionActor {
                 ) {
                     doggy_machine.start();
                 }
-                match self.run_doggy_round_end(&mut doggy_machine).await {
-                    DoggyRoundAction::Continue => {}
+                let round_tools = match &round {
+                    Ok(TurnOutcome::Completed { tools_called, .. }) => tools_called.clone(),
+                    _ => Vec::new(),
+                };
+                match self
+                    .run_doggy_round_end(&mut doggy_machine, &mut doggy_stall, &round_tools)
+                    .await
+                {
+                    DoggyRoundAction::Continue => {
+                        doggy_rounds += 1;
+                        if doggy_rounds >= DOGGY_MAX_ROUNDS_PER_PROMPT {
+                            self.doggy_end_run_at_round_cap(doggy_rounds).await;
+                            break round;
+                        }
+                    }
                     DoggyRoundAction::EndTurn => break round,
                 }
             }

@@ -23,6 +23,7 @@ pub mod audit_parse;
 pub mod decide;
 pub mod inject;
 pub mod open_items;
+pub mod progress;
 pub mod state;
 
 pub use audit::{AuditFinding, AuditVerdict};
@@ -32,4 +33,8 @@ pub use decide::{
 };
 pub use inject::Injection;
 pub use open_items::{OpenItem, OpenItemsSnapshot};
+pub use progress::{
+    RoundActivity, STALL_CUTOFF_AFTER, STALL_REAPPROACH_AFTER, StallLevel, StallTracker,
+    round_fingerprint,
+};
 pub use state::{PauseReason, TaskPhase, TaskStatus};

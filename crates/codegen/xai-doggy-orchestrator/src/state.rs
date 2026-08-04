@@ -49,4 +49,9 @@ pub enum PauseReason {
     InfraError,
     /// Session/task token or round budget exhausted.
     BudgetExhausted,
+    /// Consecutive rounds left every gate input unchanged. The host must not
+    /// turn this into an idle pause — see `GoalPauseReason::halts_unattended_run`.
+    /// It means "give up on this work and let the deferral ladder decide what
+    /// is still reachable", which is a *continuation* decision most of the time.
+    NoProgress { repeats: u32 },
 }

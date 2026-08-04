@@ -9,6 +9,21 @@ use super::*;
 /// Compile-time constant for v1; remote tunability is a deferred follow-up.
 pub(super) const GOAL_CONTINUATION_BACKOFF_THRESHOLD: u32 = 3;
 
+/// Hard ceiling on Doggy rounds within a single prompt.
+///
+/// The stall measure in `xai_doggy_orchestrator::progress` is the real guard
+/// and catches the common case — rounds that repeat verbatim — in six. This is
+/// the backstop for the case it cannot see: a run that oscillates between two
+/// or more distinguishable states forever, and a goal with no parseable
+/// acceptance criteria, where a cut-off has nothing to defer against and so
+/// cannot end the run on its own.
+///
+/// Sized to be unreachable by real work rather than to be tight. A goal that
+/// needs a hundred model rounds in one prompt is not going to be rescued by the
+/// hundred-and-first, and an unattended overnight run must have *some* number
+/// it cannot exceed.
+pub(super) const DOGGY_MAX_ROUNDS_PER_PROMPT: u32 = 100;
+
 /// How `maybe_run_goal_planner` settled, after retries and the harness's own
 /// fallback plan. Only the last two arms leave the goal without a contract,
 /// and neither is something another spawn could fix.

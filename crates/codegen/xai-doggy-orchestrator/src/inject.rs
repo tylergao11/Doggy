@@ -17,6 +17,15 @@ pub enum Injection {
     Fix {
         findings: Vec<AuditFinding>,
     },
+    /// The last `repeats` rounds were indistinguishable. Replaces the
+    /// Continue/Fix text that has demonstrably stopped working, so the run
+    /// gets a different prompt instead of the same one a fourth time.
+    Reapproach {
+        /// Consecutive identical rounds observed.
+        repeats: u32,
+        /// Open-item summary, carried so the new message still names the work.
+        open_summary: String,
+    },
 }
 
 impl Injection {
@@ -30,11 +39,19 @@ impl Injection {
         Self::Fix { findings }
     }
 
+    pub fn reapproach(repeats: u32, open_summary: impl Into<String>) -> Self {
+        Self::Reapproach {
+            repeats,
+            open_summary: open_summary.into(),
+        }
+    }
+
     /// Stable kind label for telemetry / tests.
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Continue { .. } => "continue",
             Self::Fix { .. } => "fix",
+            Self::Reapproach { .. } => "reapproach",
         }
     }
 }

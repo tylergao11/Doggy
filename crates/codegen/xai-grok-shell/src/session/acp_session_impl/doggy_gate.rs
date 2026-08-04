@@ -14,8 +14,9 @@
 
 use super::*;
 use xai_doggy_orchestrator::{
-    AuditFinding, Injection, OpenItem, OpenItemsSnapshot, RoundEndView, TaskDecision, TaskMachine,
-    VerificationOutcome, decide_after_round,
+    AuditFinding, Injection, OpenItem, OpenItemsSnapshot, PauseReason, RoundActivity, RoundEndView,
+    StallTracker, TaskDecision, TaskMachine, VerificationOutcome, decide_after_round,
+    round_fingerprint,
 };
 
 /// Action for the `handle_prompt` outer loop after one model round.
@@ -74,6 +75,31 @@ impl SessionActor {
                 summary: item.content.clone(),
             })
             .collect()
+    }
+
+    /// What the round just did, for the stall measure.
+    ///
+    /// The criteria counts come from the plan projection rather than the
+    /// classifier verdict because they are the two things that move
+    /// monotonically over a run: verification accepting one more criterion, or
+    /// the ladder giving up on one. Either is progress; neither can be faked by
+    /// narrating.
+    fn doggy_round_activity(&self, tools_called: &[String]) -> RoundActivity {
+        let mut tracker = self.goal_tracker.lock();
+        // The implementer ticks Exec boxes by writing `plan.md` directly, so the
+        // cached projection can be older than the round we are judging.
+        tracker.force_refresh_criteria_view();
+        let Some(o) = tracker.snapshot() else {
+            return RoundActivity {
+                tools_called: tools_called.to_vec(),
+                ..RoundActivity::default()
+            };
+        };
+        RoundActivity {
+            tools_called: tools_called.to_vec(),
+            verified_criteria: o.criteria_view.iter().filter(|c| c.audit).count(),
+            deferred_criteria: o.deferred_criteria.len(),
+        }
     }
 
     /// Turn-end drain so `update_goal(completed: true)` verification runs
@@ -171,6 +197,28 @@ impl SessionActor {
                      Completion is only granted after verification Achieved."
                 )
             }
+            // Deliberately not a louder Continue: the Continue text is what the
+            // model has already answered identically N times, so repeating it
+            // is the behaviour being corrected. This one forbids the restating
+            // that is being mistaken for work and names the three exits.
+            Injection::Reapproach {
+                repeats,
+                open_summary,
+            } => format!(
+                "Doggy completion gate — the last {repeats} rounds were indistinguishable: \
+                 same open work, same verification state, same tools. Restating the plan \
+                 is not progress.\n\n\
+                 Remaining work:\n{open_summary}\n\n\
+                 Do exactly one of these in this round:\n\
+                 1. Make a concrete change — write a file, run a command, fix a failing \
+                 test — and report what actually changed.\n\
+                 2. If the objective is already met, call update_goal(completed: true) so \
+                 verification can accept it.\n\
+                 3. If it cannot be done in this environment, call \
+                 update_goal(blocked_reason: ...) naming the blocker.\n\n\
+                 Do not re-plan, do not re-summarise, and do not re-read files you have \
+                 already read. Further identical rounds end this run."
+            ),
         };
         tracing::info!(
             session_id = %self.session_info.id.0,
@@ -291,7 +339,17 @@ impl SessionActor {
     /// Done / Pause and perform host side effects.
     ///
     /// **Sole production completion authority** for bound tasks.
-    pub(crate) async fn run_doggy_round_end(&self, machine: &mut TaskMachine) -> DoggyRoundAction {
+    ///
+    /// `stall` and `tools_called` carry the termination measure: the completion
+    /// rules alone can ask for another round forever (see
+    /// [`xai_doggy_orchestrator::progress`]), and this is the only loop that
+    /// applies them.
+    pub(crate) async fn run_doggy_round_end(
+        &self,
+        machine: &mut TaskMachine,
+        stall: &mut StallTracker,
+        tools_called: &[String],
+    ) -> DoggyRoundAction {
         // Process deferred completed:true / progress before deciding so the
         // classifier verdict is available as VerificationOutcome.
         self.doggy_drain_goal_updates().await;
@@ -319,19 +377,19 @@ impl SessionActor {
 
         let open_items = self.doggy_snapshot_open_items().await;
         let verification = self.doggy_verification_outcome();
+        let activity = self.doggy_round_activity(tools_called);
+        let stall_level = stall.observe(round_fingerprint(&open_items, &verification, &activity));
         let decision = decide_after_round(&RoundEndView {
             round_ok: true,
             open_items: open_items.clone(),
             user_cancel: false,
             budget_hit: false,
             verification,
+            stall: stall_level,
         });
         machine.apply(&decision);
         let decision_kind = match &decision {
-            TaskDecision::RunAnotherRound { injection } => match injection {
-                Injection::Fix { .. } => "fix",
-                Injection::Continue { .. } => "continue",
-            },
+            TaskDecision::RunAnotherRound { injection } => injection.kind(),
             TaskDecision::TaskDone => "done",
             TaskDecision::TaskPaused { .. } => "paused",
         };
@@ -341,14 +399,24 @@ impl SessionActor {
             Some(serde_json::json!({
                 "decision": decision_kind,
                 "open": open_items.summary_line(),
+                "stall": stall_level.kind(),
+                "stall_repeats": stall_level.repeats(),
             })),
         );
         tracing::info!(
             session_id = %self.session_info.id.0,
             ?decision,
             open = %open_items.summary_line(),
+            stall = stall_level.kind(),
             "doggy: after_round decision"
         );
+
+        if let TaskDecision::TaskPaused {
+            reason: PauseReason::NoProgress { repeats },
+        } = decision
+        {
+            return self.doggy_cut_off_stalled_work(repeats, stall).await;
+        }
 
         match decision {
             TaskDecision::RunAnotherRound { injection } => {
@@ -374,5 +442,101 @@ impl SessionActor {
                 DoggyRoundAction::EndTurn
             }
         }
+    }
+
+    /// Stop retrying work that `repeats` identical rounds failed to move.
+    ///
+    /// This does **not** pause the goal directly. `GoalPauseReason::NoProgress`
+    /// is barred from halting an unattended run for good reason: "this round
+    /// achieved nothing" is a signal to escalate, not to sit idle until a human
+    /// returns. So the cut-off hands the blocker to the deferral ladder, which
+    /// owns the only legitimate stop — nothing reachable remains — and reports
+    /// the deferral list when it takes it.
+    ///
+    /// That also supplies the termination argument for the round loop: every
+    /// cut-off records a deferral, an unattributed deferral blocks every
+    /// criterion, so a goal with a plan can be cut off at most once before the
+    /// run ends. The absolute round cap in `handle_prompt` covers the remaining
+    /// case of a goal with no parseable criteria, where nothing can be deferred
+    /// against.
+    async fn doggy_cut_off_stalled_work(
+        &self,
+        repeats: u32,
+        stall: &mut StallTracker,
+    ) -> DoggyRoundAction {
+        let blocker = format!(
+            "{repeats} consecutive rounds left the open work, the verification verdict and \
+             the tools used identical — retrying this is not converging"
+        );
+        tracing::warn!(
+            session_id = %self.session_info.id.0,
+            repeats,
+            "doggy: cutting off a round loop that stopped making progress"
+        );
+        xai_grok_telemetry::unified_log::info(
+            "doggy.stall.cut_off",
+            Some(self.session_info.id.0.as_ref()),
+            Some(serde_json::json!({ "repeats": repeats })),
+        );
+        let Some(outcome) = self.defer_blocker_or_end_run(blocker).await else {
+            // No Active goal to defer against — the loop has no business
+            // continuing either way.
+            self.doggy_emit_completion_ui("paused", &[]).await;
+            return DoggyRoundAction::EndTurn;
+        };
+        if outcome.run_ended {
+            self.doggy_emit_completion_ui("paused", &[]).await;
+            return DoggyRoundAction::EndTurn;
+        }
+        // Criteria are still reachable. The deferral changed the state the
+        // streak was measured against, so judging the next round against it
+        // would cut off work that never got a chance to run.
+        stall.reset();
+        self.doggy_emit_completion_ui("executing", &[]).await;
+        self.inject_goal_continuation_message(format!(
+            "Doggy completion gate — {repeats} identical rounds, so the harness stopped \
+             retrying that work and recorded it as blocked.\n\n{}\n\n\
+             Pick up a different criterion. Repeating the previous approach will be cut \
+             off again.",
+            outcome.ack
+        ))
+        .await;
+        DoggyRoundAction::Continue
+    }
+
+    /// Last-resort stop when a prompt has run
+    /// [`DOGGY_MAX_ROUNDS_PER_PROMPT`] rounds without the goal being accepted.
+    ///
+    /// Reached only by a loop the stall measure cannot see: one that keeps
+    /// changing something observable without ever converging. Reports through
+    /// the same deferral ladder so the user gets a reason, and says so plainly
+    /// when there was nothing to defer against — a run that stopped this way
+    /// must not look like one that finished.
+    pub(crate) async fn doggy_end_run_at_round_cap(&self, rounds: u32) {
+        tracing::warn!(
+            session_id = %self.session_info.id.0,
+            rounds,
+            "doggy: prompt hit the round cap without acceptance; ending the turn"
+        );
+        xai_grok_telemetry::unified_log::info(
+            "doggy.round_cap",
+            Some(self.session_info.id.0.as_ref()),
+            Some(serde_json::json!({ "rounds": rounds })),
+        );
+        let ended = self
+            .defer_blocker_or_end_run(format!(
+                "ran {rounds} rounds in a single prompt without the goal being accepted"
+            ))
+            .await
+            .is_some_and(|o| o.run_ended);
+        if !ended {
+            self.send_slash_command_output(&format!(
+                "Goal stopped after {rounds} rounds in one prompt without acceptance. \
+                 Nothing could be recorded as blocked, which usually means the plan has no \
+                 parseable acceptance criteria — check plan.md before resuming."
+            ))
+            .await;
+        }
+        self.doggy_emit_completion_ui("paused", &[]).await;
     }
 }
